@@ -13,9 +13,16 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <quarkus.platform.group-id>com.redhat.quarkus.platform</quarkus.platform.group-id>
     <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
-    <!-- Red Hat build of Quarkus. Check the current supported version for the
-         cluster you demo on: https://access.redhat.com/products/quarkus -->
-    <quarkus.platform.version>3.20.0.redhat-00003</quarkus.platform.version>
+    <!-- Red Hat build of Quarkus, 3.20 LTS line. This version string is NOT
+         guessable - verify it exists before changing it:
+
+           curl -s https://maven.repository.redhat.com/ga/com/redhat/quarkus/\
+           platform/quarkus-bom/maven-metadata.xml | grep -o '<version>3\.20[^<]*'
+
+         The platform BOM is .redhat-00004 while the artifacts it manages are
+         .redhat-00002; that asymmetry is normal and not a typo.
+         Latest release line at time of writing is 3.33.x. -->
+    <quarkus.platform.version>3.20.6.redhat-00004</quarkus.platform.version>
     <surefire-plugin.version>3.5.2</surefire-plugin.version>
   </properties>
 

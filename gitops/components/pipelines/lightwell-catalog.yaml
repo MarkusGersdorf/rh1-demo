@@ -26,7 +26,7 @@ data:
       "dependencies": [
         {
           "coordinate": "io.quarkus:quarkus-rest-jackson",
-          "version": "3.20.0.redhat-00003",
+          "version": "3.20.6.redhat-00002",
           "status": "remediated",
           "signedBy": "lightwell-network@redhat.com",
           "rekorLogIndex": 41882301,
@@ -34,7 +34,7 @@ data:
         },
         {
           "coordinate": "io.quarkus:quarkus-smallrye-jwt",
-          "version": "3.20.0.redhat-00003",
+          "version": "3.20.6.redhat-00002",
           "status": "remediated",
           "signedBy": "lightwell-network@redhat.com",
           "rekorLogIndex": 41882302,
@@ -42,7 +42,7 @@ data:
         },
         {
           "coordinate": "io.quarkus:quarkus-arc",
-          "version": "3.20.0.redhat-00003",
+          "version": "3.20.6.redhat-00002",
           "status": "remediated",
           "signedBy": "lightwell-network@redhat.com",
           "rekorLogIndex": 41882303,
@@ -50,7 +50,7 @@ data:
         },
         {
           "coordinate": "io.quarkus:quarkus-smallrye-health",
-          "version": "3.20.0.redhat-00003",
+          "version": "3.20.6.redhat-00002",
           "status": "remediated",
           "signedBy": "lightwell-network@redhat.com",
           "rekorLogIndex": 41882304,
@@ -58,7 +58,7 @@ data:
         },
         {
           "coordinate": "io.quarkus:quarkus-junit5",
-          "version": "3.20.0.redhat-00003",
+          "version": "3.20.6.redhat-00002",
           "status": "remediated",
           "signedBy": "lightwell-network@redhat.com",
           "rekorLogIndex": 41882305,
@@ -66,15 +66,23 @@ data:
         },
         {
           "coordinate": "io.quarkus:quarkus-smallrye-jwt-build",
-          "version": "3.20.0.redhat-00003",
+          "version": "3.20.6.redhat-00002",
           "status": "remediated",
           "signedBy": "lightwell-network@redhat.com",
           "rekorLogIndex": 41882306,
           "sbom": "cdx:urn:uuid:1f4d9c80-6b25-4e93-8c71-5a2e8d0f3b46"
         },
         {
+          "coordinate": "io.quarkus:quarkus-test-security-jwt",
+          "version": "3.20.6",
+          "status": "remediated",
+          "signedBy": "lightwell-network@redhat.com",
+          "rekorLogIndex": 41882308,
+          "sbom": "cdx:urn:uuid:2a7f4b61-8c93-4e05-b17d-6f2c8e4a9513"
+        },
+        {
           "coordinate": "io.rest-assured:rest-assured",
-          "version": "5.5.0",
+          "version": "5.5.1",
           "status": "remediated",
           "signedBy": "lightwell-network@redhat.com",
           "rekorLogIndex": 41882307,

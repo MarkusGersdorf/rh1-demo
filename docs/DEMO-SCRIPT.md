@@ -132,7 +132,7 @@ tkn pipelinerun logs -f -n lightwell-inward --last
 > catalog. Every Quarkus library: remediated, signed, Rekor log index, SBOM
 > reference.
 >
-> Seven remediated, nothing flagged. This half is clean — and this is the half
+> Eight remediated, nothing flagged. This half is clean — and this is the half
 > Lightwell already solves for you.
 
 *(If asked: this stage reads a ConfigMap standing in for the catalog, because
