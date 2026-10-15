@@ -45,4 +45,4 @@ metadata:
 spec:
   type: url
   targets:
-    - https://raw.githubusercontent.com/CHANGEME/rh1-demo/main/gitops/components/rhdh/catalog/template-quarkus.yaml
+    - https://raw.githubusercontent.com/MarkusGersdorf/rh1-demo/main/gitops/components/rhdh/catalog/template-quarkus.yaml

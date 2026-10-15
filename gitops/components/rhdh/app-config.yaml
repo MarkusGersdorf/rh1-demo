@@ -46,7 +46,7 @@ data:
         - allow: [Component, System, API, Resource, Location, Template]
       locations:
         - type: url
-          target: https://raw.githubusercontent.com/CHANGEME/rh1-demo/main/gitops/components/rhdh/catalog/all.yaml
+          target: https://raw.githubusercontent.com/MarkusGersdorf/rh1-demo/main/gitops/components/rhdh/catalog/all.yaml
 
     # Surfaces the scanner's verdicts on the component page. The scanner's
     # /api/reviews is plain JSON, so no custom plugin is needed for the demo.

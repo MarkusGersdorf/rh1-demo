@@ -8,8 +8,12 @@ source "$(dirname "$0")/lib.sh"
 ROOT="$(repo_root)"
 require_cluster
 
-if grep -rq 'CHANGEME' "${ROOT}/gitops" 2>/dev/null; then
-  die "gitops/ still contains CHANGEME - run ./scripts/01-set-cluster-domain.sh, commit and push first"
+# Check the exact strings that get substituted, in manifests only. README
+# files under gitops/ describe these placeholders and must not block a
+# bootstrap - an earlier version of this guard died on its own documentation.
+if grep -rq --include='*.yaml' -e 'apps\.CLUSTER_DOMAIN' -e 'CHANGEME/rh1-demo' \
+     "${ROOT}/gitops" 2>/dev/null; then
+  die "gitops manifests still contain placeholders - run ./scripts/01-set-cluster-domain.sh, commit and push first"
 fi
 
 step "Installing OpenShift GitOps operator"

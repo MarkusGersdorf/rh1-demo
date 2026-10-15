@@ -2,9 +2,13 @@
 
 ## Placeholders you must replace
 
-- `CLUSTER_DOMAIN` — run `scripts/01-set-cluster-domain.sh`.
-- `CHANGEME` in the catalog URLs — your fork of this repo, so RHDH can read
-  the catalog and template over HTTPS.
+- `CLUSTER_DOMAIN` — run `scripts/01-set-cluster-domain.sh`. This is the only
+  placeholder left on `main`.
+
+The catalog URLs already point at `MarkusGersdorf/rh1-demo`, so RHDH can read
+the catalog and template over HTTPS. **If you fork, re-run
+`scripts/01-set-cluster-domain.sh`** — it derives the slug from `git remote`
+and rewrites them.
 
 ## Catalog is loaded over HTTPS, not from a ConfigMap
 

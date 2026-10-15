@@ -9,7 +9,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/CHANGEME/rh1-demo.git
+    repoURL: https://github.com/MarkusGersdorf/rh1-demo.git
     targetRevision: main
     path: gitops/components/rhoai
   destination:

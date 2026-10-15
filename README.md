@@ -1,6 +1,6 @@
 # Lightwell Inward
 
-[![CI](https://github.com/CHANGEME/rh1-demo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CHANGEME/rh1-demo/actions/workflows/ci.yml)
+[![CI](https://github.com/MarkusGersdorf/rh1-demo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MarkusGersdorf/rh1-demo/actions/workflows/ci.yml)
 [![coverage](https://img.shields.io/badge/scanner_coverage-%E2%89%A590%25-brightgreen)](components/ai-code-review/pyproject.toml)
 [![OpenShift](https://img.shields.io/badge/OpenShift-4.22-EE0000?logo=redhat&logoColor=white)](docs/SETUP.md)
 

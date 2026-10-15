@@ -225,12 +225,18 @@ recorded answer as live inference.
 reads could not be reconfigured without a module reload and caused test
 pollution. Keep new config reads inside functions or `__init__`.
 
-**Placeholders are intentional on `main`.** `apps.CLUSTER_DOMAIN` and
-`CHANGEME/rh1-demo` are resolved per-cluster by
-`scripts/01-set-cluster-domain.sh`, which rewrites **only** `gitops/**/*.yaml`
-and `README.md` — prose under `docs/` and the `README.md` files inside
-`gitops/` describe the placeholders and must not be rewritten. CI asserts
-`components/` never contains them.
+**`apps.CLUSTER_DOMAIN` is intentional on `main`** and is the only placeholder
+left; the repo slug is already resolved. `scripts/01-set-cluster-domain.sh`
+rewrites both (the slug from `git remote`, for forks) across **only**
+`gitops/**/*.yaml` and `README.md` — prose under `docs/` and the `README.md`
+files inside `gitops/` describe the placeholders and must not be rewritten.
+CI asserts `components/` never contains them.
+
+Anything that *checks* for unresolved placeholders must match the substituted
+strings (`apps\.CLUSTER_DOMAIN`, `CHANGEME/rh1-demo`) in `*.yaml` only. Two
+separate bugs came from grepping the bare tokens across all files: the setter
+reported its own documentation as unresolved work, and `bootstrap.sh` refused
+to run because a README under `gitops/` mentions `CHANGEME`.
 
 ## CI
 

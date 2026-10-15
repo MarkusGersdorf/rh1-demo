@@ -20,7 +20,7 @@ spec:
   source:
     type: Git
     git:
-      uri: https://github.com/CHANGEME/rh1-demo.git
+      uri: https://github.com/MarkusGersdorf/rh1-demo.git
       ref: main
     contextDir: components/ai-code-review
   strategy:

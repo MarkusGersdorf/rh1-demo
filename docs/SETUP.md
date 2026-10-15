@@ -54,21 +54,23 @@ git diff --stat
 git commit -am "Point demo at this cluster" && git push
 ```
 
-This replaces `apps.CLUSTER_DOMAIN` and the `CHANGEME/rh1-demo` slug across
-`gitops/**/*.yaml` and `README.md`. **The commit matters** — Argo CD syncs from
-git, so an unpushed change does not exist.
+`apps.CLUSTER_DOMAIN` is the **only placeholder left on `main`** — the repo
+slug is already resolved to `MarkusGersdorf/rh1-demo` everywhere. **The commit
+matters**: Argo CD syncs from git, so an unpushed change does not exist.
 
-It rewrites only files something consumes: the manifests Argo CD applies, plus
-the CI badge URLs in `README.md`. Prose under `docs/` and the `README.md` files
-inside `gitops/` describe these placeholders, so they are left alone.
-
-The CI badges in `README.md` render broken until this runs and you push — they
-point at `github.com/CHANGEME/rh1-demo` in the template. Once the slug is your
-fork and CI has run once on `main`, they go live.
+The script still rewrites the slug as well, derived from `git remote`, so
+**re-run it after forking**. It touches only files something consumes — the
+manifests Argo CD applies, plus the CI badge URLs in `README.md`. Prose under
+`docs/` and the `README.md` files inside `gitops/` describe these placeholders
+and are left alone.
 
 If `origin` is not github.com, the script warns you: the RHDH catalog uses
 `raw.githubusercontent.com` URLs and the badges are GitHub Actions badges, so
 both need adjusting by hand.
+
+Note the CI badge will not render for anonymous visitors while the repository
+is private — GitHub serves workflow badges only to viewers with access. It
+renders fine when you are signed in.
 
 ### 2. Bootstrap GitOps
 
