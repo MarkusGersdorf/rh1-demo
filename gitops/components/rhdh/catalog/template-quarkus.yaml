@@ -1,0 +1,83 @@
+---
+# The "golden path" template. Its point in the demo is that the security gate
+# is not something a developer opts into - scaffolding a service wires the
+# pipeline, the review and the signing in from the first commit.
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: quarkus-lightwell-inward
+  title: Quarkus service (Lightwell Inward secured)
+  description: >-
+    A Quarkus REST service with the Lightwell Inward supply chain attached:
+    dependency verification against the Lightwell Network catalog, AI security
+    review of every diff on an RHOAI-served model, and Trusted Artifact Signer
+    signing with the review verdict as an attestation.
+  tags: [java, quarkus, recommended, security]
+spec:
+  owner: payments-team
+  type: service
+  parameters:
+    - title: Service
+      required: [name, owner]
+      properties:
+        name:
+          title: Name
+          type: string
+          description: Lowercase, hyphen-separated.
+          pattern: '^[a-z][a-z0-9-]{2,40}$'
+          ui:autofocus: true
+        description:
+          title: Description
+          type: string
+        owner:
+          title: Owner
+          type: string
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: [Group]
+    - title: Security gate
+      properties:
+        failOn:
+          title: Block the build on
+          type: string
+          default: 'critical,high'
+          enum: ['critical', 'critical,high', 'critical,high,medium']
+          description: >-
+            Severities from the AI review that stop the pipeline. Lowering this
+            does not disable the review - findings are still attested, they
+            just do not block.
+  steps:
+    - id: fetch
+      name: Fetch skeleton
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          owner: ${{ parameters.owner }}
+          failOn: ${{ parameters.failOn }}
+
+    - id: publish
+      name: Publish to Gitea
+      action: publish:gitea
+      input:
+        repoUrl: 'gitea-gitea.apps.CLUSTER_DOMAIN?owner=demo&repo=${{ parameters.name }}'
+        description: ${{ parameters.description }}
+        defaultBranch: main
+
+    - id: register
+      name: Register in the catalog
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps.publish.output.repoContentsUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps.publish.output.remoteUrl }}
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps.register.output.entityRef }}

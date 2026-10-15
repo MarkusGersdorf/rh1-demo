@@ -1,0 +1,30 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rhacs
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/CHANGEME/rh1-demo.git
+    targetRevision: main
+    path: gitops/components/rhacs
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: stackrox
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 20
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 10m

@@ -1,0 +1,84 @@
+---
+# Stand-in for the Lightwell Network catalog.
+#
+# Lightwell Network ships "a continuous stream of digitally signed binaries,
+# source code, and comprehensive compliance artifacts, including complete
+# SBOMs, delivered directly into existing pipelines." Its consumption API is
+# not publicly documented, so the lightwell-verify task reads this ConfigMap
+# instead. The check it performs is the real shape; swapping this for an API
+# client is the one change a genuine integration needs.
+#
+# SECOND ACT, optional: flip any entry's status to "vulnerable" and give it a
+# note, and the pipeline fails at the dependency stage instead - showing that
+# the Lightwell half of the gate has teeth too. Good answer to "what if the
+# problem is in a library?"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lightwell-catalog
+  namespace: lightwell-inward
+data:
+  catalog.json: |
+    {
+      "catalogVersion": "2026.10-lightwell-network",
+      "generatedAt": "2026-10-01T00:00:00Z",
+      "note": "Demo stand-in. Not a Red Hat or IBM data feed.",
+      "dependencies": [
+        {
+          "coordinate": "io.quarkus:quarkus-rest-jackson",
+          "version": "3.20.0.redhat-00003",
+          "status": "remediated",
+          "signedBy": "lightwell-network@redhat.com",
+          "rekorLogIndex": 41882301,
+          "sbom": "cdx:urn:uuid:7f1c9e21-4a6b-4c2e-9f08-2b1d4e6a8c31"
+        },
+        {
+          "coordinate": "io.quarkus:quarkus-smallrye-jwt",
+          "version": "3.20.0.redhat-00003",
+          "status": "remediated",
+          "signedBy": "lightwell-network@redhat.com",
+          "rekorLogIndex": 41882302,
+          "sbom": "cdx:urn:uuid:9a2e4c77-11b3-4de1-8a5c-6f0d9b3e2a14"
+        },
+        {
+          "coordinate": "io.quarkus:quarkus-arc",
+          "version": "3.20.0.redhat-00003",
+          "status": "remediated",
+          "signedBy": "lightwell-network@redhat.com",
+          "rekorLogIndex": 41882303,
+          "sbom": "cdx:urn:uuid:3c5b8d04-7e92-41af-b6d2-80c1a7f45e99"
+        },
+        {
+          "coordinate": "io.quarkus:quarkus-smallrye-health",
+          "version": "3.20.0.redhat-00003",
+          "status": "remediated",
+          "signedBy": "lightwell-network@redhat.com",
+          "rekorLogIndex": 41882304,
+          "sbom": "cdx:urn:uuid:5d7a1f68-2c84-4b50-9e37-1a6b4c8d02f7"
+        },
+        {
+          "coordinate": "io.quarkus:quarkus-junit5",
+          "version": "3.20.0.redhat-00003",
+          "status": "remediated",
+          "signedBy": "lightwell-network@redhat.com",
+          "rekorLogIndex": 41882305,
+          "sbom": "cdx:urn:uuid:8b3e6a12-9d47-4f21-a05c-3e9f1b7d4c68"
+        },
+        {
+          "coordinate": "io.quarkus:quarkus-smallrye-jwt-build",
+          "version": "3.20.0.redhat-00003",
+          "status": "remediated",
+          "signedBy": "lightwell-network@redhat.com",
+          "rekorLogIndex": 41882306,
+          "sbom": "cdx:urn:uuid:1f4d9c80-6b25-4e93-8c71-5a2e8d0f3b46"
+        },
+        {
+          "coordinate": "io.rest-assured:rest-assured",
+          "version": "5.5.0",
+          "status": "remediated",
+          "signedBy": "lightwell-network@redhat.com",
+          "rekorLogIndex": 41882307,
+          "sbom": "cdx:urn:uuid:6e0b2a95-4c18-4d76-b3f9-7d1c5e8a9042"
+        }
+      ]
+    }

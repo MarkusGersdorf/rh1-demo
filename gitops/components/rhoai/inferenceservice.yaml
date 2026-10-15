@@ -1,0 +1,26 @@
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: foundation-sec-reasoning
+  namespace: lightwell-inward
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+    # No autoscaling: one replica, always warm. A cold start on CPU is minutes,
+    # and a scale-from-zero mid-demo is an unforced error.
+    serving.kserve.io/autoscalerClass: external
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  labels:
+    opendatahub.io/dashboard: "true"
+    lightwell-inward.redhat.com/role: security-reviewer
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    model:
+      modelFormat:
+        name: gguf
+      runtime: llamacpp-cpu-runtime
+      # Directory, not the file. KServe maps this to /mnt/models in the
+      # container; the runtime args name the file inside it.
+      storageUri: pvc://model-store/

@@ -1,0 +1,16 @@
+---
+# The demo's Argo CD installs operators and cluster-scoped policy, so it needs
+# cluster-admin. Correct for a demo cluster; call it out as such if asked, and
+# point at per-namespace AppProject scoping as the production answer.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openshift-gitops-argocd-application-controller-cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: openshift-gitops-argocd-application-controller
+    namespace: openshift-gitops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin

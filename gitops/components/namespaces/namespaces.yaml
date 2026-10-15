@@ -1,0 +1,80 @@
+---
+# RHACM hub
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: open-cluster-management
+  labels:
+    lightwell-inward.redhat.com/demo: "true"
+---
+# RHACS operator
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rhacs-operator
+  labels:
+    lightwell-inward.redhat.com/demo: "true"
+---
+# RHACS Central + SecuredCluster
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stackrox
+  labels:
+    lightwell-inward.redhat.com/demo: "true"
+---
+# RHOAI operator
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: redhat-ods-operator
+  labels:
+    lightwell-inward.redhat.com/demo: "true"
+---
+# Red Hat Trusted Artifact Signer (Sigstore)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trusted-artifact-signer
+  labels:
+    lightwell-inward.redhat.com/demo: "true"
+---
+# Red Hat Developer Hub
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rhdh
+  labels:
+    lightwell-inward.redhat.com/demo: "true"
+---
+# In-cluster git server for a self-contained demo
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gitea
+  labels:
+    lightwell-inward.redhat.com/demo: "true"
+---
+# Scanner service + Tekton pipeline
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lightwell-inward
+  labels:
+    lightwell-inward.redhat.com/demo: "true"
+---
+# Where the demo app deploys - target of the admission gate
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-accounts
+  labels:
+    lightwell-inward.redhat.com/demo: "true"
+---
+# Red Hat Developer Hub operator
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rhdh-operator
+  labels:
+    lightwell-inward.redhat.com/demo: "true"

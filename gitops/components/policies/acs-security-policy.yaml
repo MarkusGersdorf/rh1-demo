@@ -1,0 +1,66 @@
+---
+# RHACS policy-as-code. The SecurityPolicy CRD (config.stackrox.io) lets the
+# policy live in git and be reconciled by Argo CD, which is the GitOps answer
+# to "who changed the policy and when".
+#
+# Requires RHACS with the policy-as-code CRD. Verify before relying on it:
+#   oc get crd securitypolicies.config.stackrox.io
+# If absent, scripts/05-acs-policy.sh imports the equivalent JSON via roxctl
+# and prints what you lose (reconciliation, not enforcement).
+#
+# WHAT THIS ENFORCES, precisely: that the image is signed by the Lightwell
+# Inward signer. It does not read the attestation - RHACS cannot. The chain of
+# reasoning is: only the pipeline holds the signing key, and the pipeline only
+# signs after the AI review returns pass. So "signed by us" implies "reviewed
+# and passed". Enterprise Contract (ec-validate) is what actually reads the
+# predicate. Be precise about this distinction if challenged; the combination
+# is sound, either half alone is not.
+apiVersion: config.stackrox.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: lightwell-inward-attestation-required
+  namespace: stackrox
+spec:
+  policyName: "Lightwell Inward - code review attestation required"
+  description: >-
+    Blocks deployment of any image that is not signed by the Lightwell Inward
+    signer. The signature is only ever applied after the AI security review of
+    the diff returns a passing verdict, so an unsigned image is one that either
+    skipped the review or failed it.
+  rationale: >-
+    Lightwell establishes that a security claim is only useful when it is
+    signed and verifiable. This applies the same rule to first-party code: an
+    unverifiable review is not a review, and unreviewed code does not run here.
+  remediation: >-
+    Run the change through the lightwell-inward pipeline. If the AI review
+    reports findings, fix them - the pipeline will not sign a failing build.
+  categories:
+    - "Supply Chain Security"
+  severity: HIGH_SEVERITY
+  # Enforce at admission AND continuously on existing deployments.
+  enforcementBehaviors:
+    - DEPLOY_TIME_ENFORCEMENT
+  lifecycleStages:
+    - DEPLOY
+  policySections:
+    - sectionName: "Unsigned or untrusted signature"
+      policyGroups:
+        - fieldName: "Image Signature Verified By"
+          booleanOperator: OR
+          negate: true
+          values:
+            # Must match the signature integration name created by
+            # scripts/05-acs-policy.sh.
+            - value: "lightwell-inward-signer"
+  # Keep the demo's own infrastructure out of scope - the scanner, Gitea and
+  # the model server are not built by this pipeline and would otherwise be
+  # blocked by their own gate.
+  exclusions:
+    - name: "exclude lightwell-inward infrastructure"
+      deployment:
+        scope:
+          namespace: "lightwell-inward"
+    - name: "exclude platform namespaces"
+      deployment:
+        scope:
+          namespace: "^(openshift|kube|stackrox|rhdh|gitea|open-cluster-management|redhat-ods|trusted-artifact-signer).*"

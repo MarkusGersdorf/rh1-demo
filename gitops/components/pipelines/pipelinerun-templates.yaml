@@ -1,0 +1,34 @@
+---
+# Not synced as live objects - these are templates you copy. Kept out of
+# kustomization.yaml so Argo CD does not create (and prune) PipelineRuns.
+#
+#   oc create -f gitops/components/pipelines/pipelinerun-templates.yaml
+#
+# or use scripts/run-pipeline.sh, which fills in the revision for you.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: lightwell-inward-
+  namespace: lightwell-inward
+spec:
+  pipelineRef:
+    name: lightwell-inward
+  taskRunTemplate:
+    serviceAccountName: pipeline-runner
+  timeouts:
+    pipeline: 1h0m0s
+  params:
+    - name: repo-url
+      value: http://gitea.gitea.svc.cluster.local:3000/demo/accounts-api.git
+    - name: revision
+      value: main
+    - name: image
+      value: image-registry.openshift-image-registry.svc:5000/demo-accounts/accounts-api
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi

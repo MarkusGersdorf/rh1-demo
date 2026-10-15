@@ -1,0 +1,42 @@
+---
+# Trimmed to what the demo needs. Dashboard stays on so you can show the model
+# in the RHOAI UI during the walkthrough; everything not needed is Removed to
+# keep a CPU-only cluster responsive.
+apiVersion: datasciencecluster.opendatahub.io/v1
+kind: DataScienceCluster
+metadata:
+  name: default-dsc
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  components:
+    dashboard:
+      managementState: Managed
+    kserve:
+      managementState: Managed
+      # RawDeployment avoids the Serverless + Service Mesh dependency chain.
+      defaultDeploymentMode: RawDeployment
+      serving:
+        managementState: Removed
+      rawDeploymentServiceConfig: Headed
+    modelregistry:
+      managementState: Managed
+      registriesNamespace: rhoai-model-registries
+    workbenches:
+      managementState: Managed
+    modelmeshserving:
+      managementState: Removed
+    datasciencepipelines:
+      managementState: Removed
+    kueue:
+      managementState: Removed
+    ray:
+      managementState: Removed
+    trainingoperator:
+      managementState: Removed
+    trustyai:
+      managementState: Removed
+    codeflare:
+      managementState: Removed
+    feastoperator:
+      managementState: Removed

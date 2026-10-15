@@ -1,0 +1,63 @@
+diff --git a/src/main/java/com/redhat/demo/accounts/AccountResource.java b/src/main/java/com/redhat/demo/accounts/AccountResource.java
+index 62b81b6..95aa027 100644
+--- a/src/main/java/com/redhat/demo/accounts/AccountResource.java
++++ b/src/main/java/com/redhat/demo/accounts/AccountResource.java
+@@ -1,5 +1,9 @@
+ package com.redhat.demo.accounts;
+ 
++import java.time.LocalDate;
++import java.time.format.DateTimeParseException;
++import java.util.List;
++import java.util.Map;
+ import java.util.Optional;
+ 
+ import jakarta.annotation.security.RolesAllowed;
+@@ -40,4 +44,48 @@ public class AccountResource {
+         }
+         return Response.ok(account.get()).build();
+     }
++
++    /**
++     * List statements for an account, optionally filtered by date range.
++     *
++     * Added in RHONE-4412 so the mobile client can page through history.
++     */
++    @GET
++    @Path("/{id}/statements")
++    @RolesAllowed("customer")
++    public Response statements(@PathParam("id") String id,
++                              @QueryParam("from") String from,
++                              @QueryParam("to") String to) {
++        try {
++            Optional<Account> maybeAccount = repository.findById(id);
++            if (maybeAccount.isEmpty()) {
++                return Response.status(Response.Status.NOT_FOUND).build();
++            }
++            Account account = maybeAccount.get();
++
++            // Statements are private to the account owner.
++            if (!account.ownerId().equals(jwt.getSubject())) {
++                LOG.warnf("ownership mismatch: subject=%s account=%s owner=%s",
++                        jwt.getSubject(), id, account.ownerId());
++            }
++
++            List<Statement> statements = repository.statementsFor(
++                    account.id(), parseDate(from), parseDate(to));
++
++            return Response.ok(Map.of(
++                    "accountId", account.id(),
++                    "holder", account.displayName(),
++                    "count", statements.size(),
++                    "statements", statements)).build();
++        } catch (DateTimeParseException e) {
++            return Response.status(Response.Status.BAD_REQUEST)
++                    .entity(Map.of("error", e.getMessage(),
++                                   "detail", e.toString()))
++                    .build();
++        }
++    }
++
++    private static LocalDate parseDate(String value) {
++        return (value == null || value.isBlank()) ? null : LocalDate.parse(value);
++    }
+ }

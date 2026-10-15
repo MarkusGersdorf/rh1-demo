@@ -1,0 +1,78 @@
+---
+# Custom KServe ServingRuntime: llama.cpp's OpenAI-compatible server.
+#
+# Why not vLLM (the RHOAI default)? vLLM's CPU backend is buildable but
+# awkward, and an 8B model on CPU wants aggressive quantisation that llama.cpp
+# does natively. The API surface is OpenAI-compatible either way, so the
+# scanner service does not know or care which one answers.
+#
+# The GPU story is servingruntime-vllm-gpu.yaml, shipped alongside this.
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: llamacpp-cpu-runtime
+  namespace: lightwell-inward
+  annotations:
+    openshift.io/display-name: "llama.cpp (CPU, GGUF)"
+    opendatahub.io/recommended-accelerators: "[]"
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  supportedModelFormats:
+    - name: gguf
+      autoSelect: true
+      priority: 1
+  protocolVersions:
+    - v2
+    - grpc-v2
+  multiModel: false
+  containers:
+    - name: kserve-container
+      image: ghcr.io/ggml-org/llama.cpp:server
+      args:
+        - --model
+        # Must match QUANT in the model-fetch job.
+        - /mnt/models/foundation-sec-8b-reasoning-Q4_K_M.gguf
+        - --alias
+        - foundation-sec-8b-reasoning
+        - --host
+        - 0.0.0.0
+        - --port
+        - "8080"
+        - --ctx-size
+        - "8192"
+        # One request at a time. Concurrency on CPU buys nothing here and
+        # makes latency unpredictable, which is worse than slow on stage.
+        - --parallel
+        - "1"
+        - --threads
+        - "8"
+        # Use the model's own chat template, so the reasoning format is right.
+        - --jinja
+        - --no-warmup
+      ports:
+        - containerPort: 8080
+          protocol: TCP
+      resources:
+        requests:
+          cpu: "6"
+          memory: 12Gi
+        limits:
+          cpu: "8"
+          memory: 16Gi
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8080
+        # Loading ~5GB of GGUF off a demo PVC is not quick. Be patient here or
+        # KServe will restart the pod in a loop and you will blame the model.
+        initialDelaySeconds: 60
+        periodSeconds: 15
+        failureThreshold: 40
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 8080
+        initialDelaySeconds: 300
+        periodSeconds: 30
+        failureThreshold: 10

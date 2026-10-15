@@ -1,0 +1,54 @@
+---
+# Red Hat Trusted Artifact Signer - the Sigstore stack: Fulcio (certificates),
+# Rekor (transparency log), CTlog, TUF (trust root), TSA (timestamps).
+#
+# The demo signs with a cosign key but still uploads to this Rekor, so the
+# signature and the AI-review attestation are both in a real transparency log.
+# That is what makes "revoke by model digest" more than a slide.
+apiVersion: rhtas.redhat.com/v1alpha1
+kind: Securesign
+metadata:
+  name: securesign
+  namespace: trusted-artifact-signer
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  rekor:
+    externalAccess:
+      enabled: true
+    rekorSearchUI:
+      enabled: true
+    monitoring:
+      enabled: false
+  fulcio:
+    externalAccess:
+      enabled: true
+    config:
+      OIDCIssuers:
+        # The cluster's own service-account issuer. Enough for keyless signing
+        # from in-cluster workloads if you choose to switch sign-and-attest
+        # over to keyless.
+        - Issuer: https://kubernetes.default.svc
+          IssuerURL: https://kubernetes.default.svc
+          ClientID: trusted-artifact-signer
+          Type: kubernetes
+    certificate:
+      organizationName: Red Hat Demo
+      organizationEmail: lightwell-inward@redhat.com
+      commonName: fulcio.lightwell-inward.demo
+    monitoring:
+      enabled: false
+  ctlog:
+    monitoring:
+      enabled: false
+  tuf:
+    externalAccess:
+      enabled: true
+  timestampAuthority:
+    externalAccess:
+      enabled: true
+    signer:
+      certificateChain:
+        certificateChainRef:
+          name: tsa-cert-chain
+          key: certificateChain

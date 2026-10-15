@@ -1,0 +1,663 @@
+---
+# Tasks are defined inline rather than pulled from the Tekton Hub or relying on
+# specific ClusterTask versions being present. More YAML, far fewer surprises
+# the morning of the event.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: fetch-source
+  namespace: lightwell-inward
+spec:
+  description: Clone the repo and record the revision range under review.
+  params:
+    - name: url
+      type: string
+    - name: revision
+      type: string
+      default: main
+    - name: base-revision
+      type: string
+      default: ""
+      description: Commit to diff against. Defaults to the parent of revision.
+  workspaces:
+    - name: source
+  results:
+    - name: commit
+      description: Resolved SHA of the reviewed commit.
+    - name: base-commit
+      description: Resolved SHA of the comparison base.
+  steps:
+    - name: clone
+      image: registry.access.redhat.com/ubi9/toolbox:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        rm -rf repo && mkdir -p repo
+
+        # Full history: the review needs the parent commit to produce a diff.
+        git clone --no-single-branch "$(params.url)" repo
+        cd repo
+        git checkout "$(params.revision)"
+
+        COMMIT="$(git rev-parse HEAD)"
+        BASE="$(params.base-revision)"
+        if [[ -z "${BASE}" ]]; then
+          BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+        else
+          BASE="$(git rev-parse "${BASE}")"
+        fi
+
+        echo "reviewing ${BASE:0:12}..${COMMIT:0:12}"
+        printf '%s' "${COMMIT}" > "$(results.commit.path)"
+        printf '%s' "${BASE}"   > "$(results.base-commit.path)"
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: lightwell-verify
+  namespace: lightwell-inward
+spec:
+  description: >
+    Verify every declared dependency against the Lightwell Network catalog of
+    remediated, signed artifacts.
+
+    IMPLEMENTATION NOTE, and say this plainly if asked on stage: Lightwell
+    Network's consumption API is not publicly documented, so this task reads a
+    local ConfigMap standing in for the catalog. The shape of the check is
+    right - resolve each dependency, confirm it is a remediated version, and
+    confirm the signature verifies - and the ConfigMap is the one piece a real
+    integration would replace with an API client.
+  params:
+    - name: catalog-path
+      type: string
+      default: /lightwell/catalog.json
+  workspaces:
+    - name: source
+  results:
+    - name: verdict
+    - name: summary
+  steps:
+    - name: verify
+      image: registry.access.redhat.com/ubi9/python-312:latest
+      workingDir: $(workspaces.source.path)/repo
+      volumeMounts:
+        - name: lightwell-catalog
+          mountPath: /lightwell
+      script: |
+        #!/usr/bin/env python3
+        import json, re, sys, pathlib
+
+        catalog = json.load(open("$(params.catalog-path)"))
+        entries = {e["coordinate"]: e for e in catalog["dependencies"]}
+
+        pom = pathlib.Path("pom.xml")
+        if not pom.exists():
+            print("no pom.xml - nothing to verify")
+            pathlib.Path("$(results.verdict.path)").write_text("skipped")
+            pathlib.Path("$(results.summary.path)").write_text("no manifest found")
+            sys.exit(0)
+
+        text = pom.read_text()
+        deps = re.findall(
+            r"<groupId>([^<]+)</groupId>\s*<artifactId>([^<]+)</artifactId>", text)
+
+        # The first match is the project's own coordinates, not a dependency.
+        # Reporting your own artifact as "outside Lightwell coverage" is true
+        # but confusing, so drop it.
+        self_coord = f"{deps[0][0]}:{deps[0][1]}" if deps else ""
+
+        print(f"Lightwell Network catalog: {catalog['catalogVersion']} "
+              f"({len(entries)} remediated artifacts)\n")
+
+        unknown, remediated, flagged = [], [], []
+        for group, artifact in deps:
+            coord = f"{group}:{artifact}"
+            if "${" in coord or coord == self_coord:
+                continue  # Maven property, or the project itself
+            entry = entries.get(coord)
+            if entry is None:
+                unknown.append(coord)
+                print(f"  ?  {coord}  not in catalog (outside Lightwell coverage)")
+            elif entry["status"] == "remediated":
+                remediated.append(coord)
+                print(f"  OK {coord}  {entry['version']}  "
+                      f"signed by {entry['signedBy']}  "
+                      f"rekor={entry['rekorLogIndex']}")
+            else:
+                flagged.append((coord, entry))
+                print(f"  !! {coord}  {entry['status']}: {entry.get('note', '')}")
+
+        print(f"\n{len(remediated)} remediated, {len(unknown)} uncovered, "
+              f"{len(flagged)} flagged")
+
+        summary = (f"{len(remediated)} remediated / {len(unknown)} uncovered "
+                   f"/ {len(flagged)} flagged")
+        pathlib.Path("$(results.summary.path)").write_text(summary)
+
+        if flagged:
+            print("\nFAIL: a dependency is flagged by Lightwell and must be "
+                  "upgraded before this artifact can be built.")
+            pathlib.Path("$(results.verdict.path)").write_text("fail")
+            sys.exit(1)
+
+        print("\nPASS: dependency supply chain clean.")
+        print("This is the half Lightwell already covers. The next task is the "
+              "half it does not.")
+        pathlib.Path("$(results.verdict.path)").write_text("pass")
+  volumes:
+    - name: lightwell-catalog
+      configMap:
+        name: lightwell-catalog
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: sast-semgrep
+  namespace: lightwell-inward
+spec:
+  description: >
+    Deterministic SAST. In this demo it passes clean on the planted flaw, which
+    is the entire point - do not treat that as Semgrep failing. There is no
+    taint flow and no dangerous sink; pattern matching has nothing to match.
+  workspaces:
+    - name: source
+  results:
+    - name: verdict
+    - name: findings-count
+  steps:
+    - name: semgrep
+      image: docker.io/semgrep/semgrep:latest
+      workingDir: $(workspaces.source.path)/repo
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+
+        # --error would make a finding fail the step; we want the count so the
+        # pipeline can report "SAST clean" alongside the AI result.
+        semgrep scan --config=p/java --config=p/secrets --config=p/owasp-top-ten \
+          --json --output=/tmp/semgrep.json --quiet --metrics=off
+        RC=$?
+
+        COUNT=$(python3 -c "import json;print(len(json.load(open('/tmp/semgrep.json'))['results']))" 2>/dev/null || echo 0)
+        echo "semgrep findings: ${COUNT}"
+        python3 -c "
+        import json
+        for r in json.load(open('/tmp/semgrep.json'))['results']:
+            print(f\"  {r['extra']['severity']:8} {r['check_id']}\")
+            print(f\"           {r['path']}:{r['start']['line']}\")
+        " 2>/dev/null || true
+
+        printf '%s' "${COUNT}" > "$(results.findings-count.path)"
+        if [[ "${COUNT}" -gt 0 ]]; then
+          printf 'findings' > "$(results.verdict.path)"
+        else
+          printf 'pass' > "$(results.verdict.path)"
+          echo
+          echo "SAST is clean. That is not the same as secure."
+        fi
+        exit 0
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ai-code-review
+  namespace: lightwell-inward
+spec:
+  description: >
+    The extension point. Sends the diff to the Foundation-Sec reasoning model
+    via the scanner service and fails the pipeline on a blocking finding.
+    Writes the in-toto predicate to the workspace for the signing task.
+  params:
+    - name: scanner-url
+      type: string
+      default: http://ai-code-review.lightwell-inward.svc.cluster.local:8080
+    - name: commit
+      type: string
+    - name: base-commit
+      type: string
+    - name: repo-url
+      type: string
+    - name: semgrep-verdict
+      type: string
+      default: unknown
+  workspaces:
+    - name: source
+  results:
+    - name: verdict
+    - name: findings-count
+    - name: top-severity
+  steps:
+    - name: review
+      image: registry.access.redhat.com/ubi9/python-312:latest
+      workingDir: $(workspaces.source.path)/repo
+      # Generous: CPU inference on an 8B reasoning model is minutes, not seconds.
+      timeout: 20m
+      script: |
+        #!/usr/bin/env python3
+        """Collect the diff, ask the model, enforce the verdict."""
+        import json, pathlib, subprocess, sys, urllib.error, urllib.request
+
+        COMMIT   = "$(params.commit)"
+        BASE     = "$(params.base-commit)"
+        REPO     = "$(params.repo-url)"
+        SCANNER  = "$(params.scanner-url)".rstrip("/")
+
+        def git(*args):
+            return subprocess.run(["git", *args], capture_output=True,
+                                  text=True, check=True).stdout
+
+        diff = git("diff", f"{BASE}..{COMMIT}", "--", ".")
+        if not diff.strip():
+            print("empty diff - nothing to review")
+            pathlib.Path("$(results.verdict.path)").write_text("pass")
+            pathlib.Path("$(results.findings-count.path)").write_text("0")
+            pathlib.Path("$(results.top-severity.path)").write_text("none")
+            sys.exit(0)
+
+        changed = [p for p in git("diff", "--name-only", f"{BASE}..{COMMIT}").split()
+                   if p.endswith((".java", ".py", ".go", ".ts", ".js"))]
+
+        # Whole files for changed sources, not just hunks. An authorisation bug
+        # is often only visible when you can see the check's result go nowhere.
+        files = []
+        for path in changed[:10]:
+            try:
+                content = pathlib.Path(path).read_text()
+            except OSError:
+                continue
+            if len(content) < 60_000:
+                files.append({"path": path, "content": content})
+
+        payload = {
+            "repository": REPO, "commit": COMMIT, "base_commit": BASE,
+            "diff": diff, "files": files,
+            "complementary": [{
+                "name": "semgrep",
+                "verdict": "$(params.semgrep-verdict)",
+                "note": "Ran in the same pipeline. Covers a different bug class.",
+            }],
+        }
+
+        print(f"reviewing {BASE[:12]}..{COMMIT[:12]}")
+        print(f"  {len(diff.splitlines())} diff lines, {len(files)} full files\n")
+
+        req = urllib.request.Request(
+            f"{SCANNER}/review",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=900) as resp:
+                result = json.load(resp)
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+            # Fail closed. A gate that opens when the model is down is decoration.
+            print(f"FAIL: scanner unreachable: {exc}")
+            pathlib.Path("$(results.verdict.path)").write_text("error")
+            pathlib.Path("$(results.findings-count.path)").write_text("0")
+            pathlib.Path("$(results.top-severity.path)").write_text("unknown")
+            sys.exit(1)
+
+        verdict  = result["verdict"]
+        findings = result.get("findings", [])
+        tag = "REPLAY" if result.get("replayed") else "LIVE"
+
+        print("=" * 78)
+        print(f"  {result['model']}   [{tag}]")
+        print(f"  backend={result['backend']}  prompt={result['prompt_version']}"
+              f"  {result['latency_ms']} ms")
+        print("=" * 78)
+        if result.get("summary"):
+            print(f"\n{result['summary']}\n")
+
+        for f in findings:
+            print("-" * 78)
+            print(f"  {f['severity'].upper()}  [{f['confidence']} confidence]  {f['title']}")
+            print(f"  {f['cwe']}  {f['owasp']}")
+            if f.get("cvss_vector"):
+                print(f"  CVSS {f.get('cvss_score', '?')}  {f['cvss_vector']}")
+            print(f"  {f['file']}:{f['line']}")
+            print(f"\n  WHY\n    {f['rationale']}")
+            if f.get("exploit"):
+                print(f"\n  EXPLOIT\n    {f['exploit']}")
+            if f.get("fix"):
+                print(f"\n  FIX\n    {f['fix']}")
+            print()
+        print("-" * 78)
+
+        if result.get("error"):
+            print(f"\nscanner error: {result['error']}")
+
+        # Hand the predicate to the signing task.
+        if result.get("predicate"):
+            out = pathlib.Path("$(workspaces.source.path)/ai-review-predicate.json")
+            out.write_text(json.dumps(result["predicate"], indent=2))
+            print(f"\npredicate written to {out}")
+
+        top = findings[0]["severity"] if findings else "none"
+        pathlib.Path("$(results.verdict.path)").write_text(verdict)
+        pathlib.Path("$(results.findings-count.path)").write_text(str(len(findings)))
+        pathlib.Path("$(results.top-severity.path)").write_text(top)
+
+        if verdict in ("fail", "error"):
+            print(f"\nVERDICT: {verdict.upper()} - no artifact will be built.")
+            print("Lightwell's lesson applied inward: an unverifiable claim is "
+                  "not a claim. This change does not get signed.")
+            sys.exit(1)
+
+        print("\nVERDICT: PASS - proceeding to build and sign.")
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: build-image
+  namespace: lightwell-inward
+spec:
+  description: Build the container image with Buildah and push by digest.
+  params:
+    - name: image
+      type: string
+    - name: containerfile
+      type: string
+      default: ./Containerfile
+  workspaces:
+    - name: source
+  results:
+    - name: digest
+    - name: image-ref
+  steps:
+    - name: buildah
+      image: registry.redhat.io/rhel9/buildah:latest
+      workingDir: $(workspaces.source.path)/repo
+      securityContext:
+        capabilities:
+          add: ["SETFCAP"]
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        IMAGE="$(params.image)"
+
+        buildah --storage-driver=vfs bud \
+          --format=oci --tls-verify=false --no-cache \
+          -f "$(params.containerfile)" -t "${IMAGE}" .
+
+        buildah --storage-driver=vfs push --tls-verify=false \
+          --digestfile=/tmp/digest "${IMAGE}"
+
+        DIGEST="$(cat /tmp/digest)"
+        echo "pushed ${IMAGE}@${DIGEST}"
+        printf '%s' "${DIGEST}"                > "$(results.digest.path)"
+        printf '%s@%s' "${IMAGE}" "${DIGEST}"  > "$(results.image-ref.path)"
+      volumeMounts:
+        - name: varlibcontainers
+          mountPath: /var/lib/containers
+  volumes:
+    - name: varlibcontainers
+      emptyDir: {}
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: sign-and-attest
+  namespace: lightwell-inward
+spec:
+  description: >
+    Red Hat Trusted Artifact Signer. Signs the image, then attaches the AI
+    review verdict as an in-toto attestation. Both land in the RHTAS Rekor
+    transparency log, which is what makes the claim auditable and revocable.
+
+    This task uses a cosign key from a Secret. Keyless (Fulcio + workload
+    identity) is the production path and the flags are in the comments below;
+    key-based is used here because a demo should not hinge on OIDC trust
+    configuration at 09:00 on stage.
+  params:
+    - name: image-ref
+      type: string
+      description: Full image@sha256:... reference.
+    - name: rekor-url
+      type: string
+      default: http://rekor-server.trusted-artifact-signer.svc.cluster.local
+  workspaces:
+    - name: source
+  results:
+    - name: rekor-log-index
+  steps:
+    - name: sign
+      image: registry.redhat.io/rhtas/cosign-rhel9:latest
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: COSIGN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cosign-keypair
+              key: password
+        - name: COSIGN_YES
+          value: "true"
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        IMAGE="$(params.image-ref)"
+        REKOR="$(params.rekor-url)"
+
+        echo "== signing ${IMAGE}"
+        cosign sign --key k8s://lightwell-inward/cosign-keypair \
+          --rekor-url="${REKOR}" \
+          --allow-insecure-registry --tlog-upload=true \
+          "${IMAGE}"
+
+        # Keyless equivalent, for the production story:
+        #   cosign sign --rekor-url="${REKOR}" \
+        #     --fulcio-url=http://fulcio-server.trusted-artifact-signer.svc \
+        #     --oidc-issuer="${OIDC_ISSUER}" --identity-token="${SA_TOKEN}" \
+        #     "${IMAGE}"
+
+        if [[ ! -f ai-review-predicate.json ]]; then
+          echo "FAIL: no AI review predicate on the workspace."
+          echo "The image will not be attested, so it cannot pass admission."
+          exit 1
+        fi
+
+        echo
+        echo "== attaching AI code review attestation"
+        cat ai-review-predicate.json
+
+        cosign attest --key k8s://lightwell-inward/cosign-keypair \
+          --rekor-url="${REKOR}" \
+          --type "https://redhat.com/lightwell-inward/code-review/v1" \
+          --predicate ai-review-predicate.json \
+          --allow-insecure-registry --tlog-upload=true \
+          "${IMAGE}"
+
+        echo
+        echo "== verifying what we just produced"
+        cosign verify --key k8s://lightwell-inward/cosign-keypair \
+          --rekor-url="${REKOR}" --allow-insecure-registry \
+          --insecure-ignore-tlog=false "${IMAGE}"
+
+        cosign verify-attestation --key k8s://lightwell-inward/cosign-keypair \
+          --rekor-url="${REKOR}" --allow-insecure-registry \
+          --type "https://redhat.com/lightwell-inward/code-review/v1" \
+          "${IMAGE}" > /tmp/att.json
+
+        echo
+        echo "Signature and attestation are in Rekor. The verdict is now a"
+        echo "supply-chain fact, not a line in a CI log."
+
+        python3 -c "
+        import json,sys
+        try:
+            idx = json.load(open('/tmp/att.json')).get('logIndex','unknown')
+        except Exception:
+            idx = 'unknown'
+        print(idx, end='')
+        " > "$(results.rekor-log-index.path)" 2>/dev/null || printf 'unknown' > "$(results.rekor-log-index.path)"
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: acs-image-check
+  namespace: lightwell-inward
+spec:
+  description: >
+    RHACS image scan. Covers the layer the AI review does not: known CVEs in
+    the base image and packaged dependencies. Both halves, deliberately.
+  params:
+    - name: image-ref
+      type: string
+    - name: central-endpoint
+      type: string
+      default: central.stackrox.svc:443
+  steps:
+    - name: roxctl
+      image: quay.io/stackrox-io/roxctl:latest
+      env:
+        - name: ROX_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: acs-api-token
+              key: token
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+
+        roxctl image check --insecure-skip-tls-verify \
+          --endpoint "$(params.central-endpoint)" \
+          --image "$(params.image-ref)" \
+          --output table
+        RC=$?
+
+        if [[ ${RC} -ne 0 ]]; then
+          echo "RHACS build-time policy failed."
+          exit ${RC}
+        fi
+        echo "RHACS build-time policies passed."
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ec-validate
+  namespace: lightwell-inward
+spec:
+  description: >
+    Enterprise Contract (Conforma). RHACS enforces that an image is signed by
+    a trusted signer; it does not read inside the attestation. Enterprise
+    Contract does - it evaluates rego policy against the in-toto predicate.
+
+    This is the component that turns "the attestation says verdict=pass" into
+    an enforced release rule, and it is the right answer when someone asks how
+    you stop a signed-but-failing artifact from being promoted.
+  params:
+    - name: image-ref
+      type: string
+    - name: rekor-url
+      type: string
+      default: http://rekor-server.trusted-artifact-signer.svc.cluster.local
+  workspaces:
+    - name: source
+  steps:
+    - name: validate
+      image: registry.redhat.io/rhtas/ec-rhel9:latest
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: COSIGN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cosign-keypair
+              key: password
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        # The public key arrives as a mounted secret - no cluster API calls,
+        # no RBAC, and no assumption that `oc` exists in this image.
+        [[ -s /keys/cosign.pub ]] \
+          || { echo "FAIL: cosign.pub not mounted from the cosign-keypair secret"; exit 1; }
+        cp /keys/cosign.pub /tmp/cosign.pub
+
+        cat > /tmp/policy.yaml <<'POLICY'
+        ---
+        # Minimal, readable, and the whole point: the predicate must exist and
+        # must say pass. Everything else about the image can be perfect and
+        # this still blocks.
+        sources:
+          - policy:
+              - /policies
+            config:
+              include:
+                - lightwell_inward
+        POLICY
+
+        mkdir -p /tmp/policies/lightwell_inward
+        cat > /tmp/policies/lightwell_inward/review.rego <<'REGO'
+        package lightwell_inward
+
+        import rego.v1
+
+        # An artifact must carry a Lightwell Inward code review attestation.
+        deny contains result if {
+            not code_review_attestation
+            result := {
+                "code": "lightwell_inward.attestation_missing",
+                "msg": "no Lightwell Inward code review attestation on this image",
+            }
+        }
+
+        # And that review must have passed.
+        deny contains result if {
+            some att in code_review_attestations
+            att.predicate.verdict != "pass"
+            result := {
+                "code": "lightwell_inward.review_failed",
+                "msg": sprintf("code review verdict is %q, not \"pass\"", [att.predicate.verdict]),
+            }
+        }
+
+        # A review of nothing is not a review. Guards against an empty-diff
+        # attestation being used to launder a change.
+        deny contains result if {
+            some att in code_review_attestations
+            att.predicate.scope.filesReviewed == 0
+            result := {
+                "code": "lightwell_inward.empty_scope",
+                "msg": "attestation covers zero files",
+            }
+        }
+
+        # The model must be pinned. An unpinned claim cannot be revoked later,
+        # which removes the main reason to attest it at all.
+        deny contains result if {
+            some att in code_review_attestations
+            att.predicate.reviewer.modelDigest == "unpinned"
+            result := {
+                "code": "lightwell_inward.model_unpinned",
+                "msg": "reviewer.modelDigest is unpinned - claim is not revocable",
+            }
+        }
+
+        code_review_attestations := [a |
+            some a in input.attestations
+            a.predicateType == "https://redhat.com/lightwell-inward/code-review/v1"
+        ]
+
+        code_review_attestation if count(code_review_attestations) > 0
+        REGO
+
+        echo "== Enterprise Contract validation of $(params.image-ref)"
+        ec validate image \
+          --image "$(params.image-ref)" \
+          --public-key /tmp/cosign.pub \
+          --rekor-url "$(params.rekor-url)" \
+          --policy /tmp/policy.yaml \
+          --ignore-rekor=false \
+          --output text \
+          --strict
+      volumeMounts:
+        - name: cosign-pub
+          mountPath: /keys
+  volumes:
+    - name: cosign-pub
+      secret:
+        secretName: cosign-keypair
+        items:
+          - key: cosign.pub
+            path: cosign.pub

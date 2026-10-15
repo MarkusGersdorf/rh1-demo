@@ -1,0 +1,107 @@
+---
+# A small in-cluster Gitea so the demo does not depend on github.com being
+# reachable, or on a demo account's rate limits. SQLite, one replica, one PVC.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitea-data
+  namespace: gitea
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitea
+  namespace: gitea
+  labels:
+    app: gitea
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gitea
+  template:
+    metadata:
+      labels:
+        app: gitea
+    spec:
+      containers:
+        - name: gitea
+          image: docker.io/gitea/gitea:1.24
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: GITEA__database__DB_TYPE
+              value: sqlite3
+            - name: GITEA__database__PATH
+              value: /data/gitea.db
+            - name: GITEA__security__INSTALL_LOCK
+              value: "true"
+            - name: GITEA__service__DISABLE_REGISTRATION
+              value: "true"
+            # Webhooks target in-cluster Services, which Gitea blocks by
+            # default as "local network". Allow it, or no pipeline ever fires.
+            - name: GITEA__webhook__ALLOWED_HOST_LIST
+              value: "*"
+            - name: GITEA__repository__DEFAULT_BRANCH
+              value: main
+            - name: GITEA__server__ROOT_URL
+              value: http://gitea.gitea.svc.cluster.local:3000/
+            - name: GITEA__server__OFFLINE_MODE
+              value: "true"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 12
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: gitea-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitea
+  namespace: gitea
+spec:
+  selector:
+    app: gitea
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: gitea
+  namespace: gitea
+spec:
+  to:
+    kind: Service
+    name: gitea
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

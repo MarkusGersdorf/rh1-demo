@@ -1,0 +1,59 @@
+---
+# NOT in kustomization.yaml. This is the GPU swap-in.
+#
+# To use it:
+#   1. Add a GPU MachineSet (1x L40S / A10G / A100, 24GB+).
+#   2. Install the Node Feature Discovery and NVIDIA GPU operators.
+#   3. Add this file to gitops/components/rhoai/kustomization.yaml.
+#   4. Point the InferenceService at runtime: vllm-gpu-runtime, and change
+#      modelFormat.name to vLLM, storageUri to the HF snapshot directory.
+#   5. Set SCANNER_BACKEND=vllm in gitops/components/ai-code-review/configmap.yaml.
+#
+# Nothing else in the demo changes - which is the point of keeping the scanner
+# behind an OpenAI-compatible interface.
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: vllm-gpu-runtime
+  namespace: lightwell-inward
+  annotations:
+    openshift.io/display-name: "vLLM (NVIDIA GPU)"
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  supportedModelFormats:
+    - name: vLLM
+      autoSelect: true
+      priority: 1
+  protocolVersions:
+    - v2
+  multiModel: false
+  containers:
+    - name: kserve-container
+      image: quay.io/modh/vllm:rhoai-latest
+      args:
+        - --model=/mnt/models
+        - --served-model-name=foundation-sec-8b-reasoning
+        - --port=8080
+        - --max-model-len=16384
+        - --dtype=bfloat16
+        - --gpu-memory-utilization=0.90
+      ports:
+        - containerPort: 8080
+          protocol: TCP
+      resources:
+        requests:
+          cpu: "4"
+          memory: 24Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: 32Gi
+          nvidia.com/gpu: "1"
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8080
+        initialDelaySeconds: 90
+        periodSeconds: 10
+        failureThreshold: 60

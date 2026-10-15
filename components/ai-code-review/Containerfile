@@ -1,0 +1,25 @@
+# UBI9 Python 3.12. Pinned deps in requirements.txt resolve against this base;
+# the local pins will not build on Python 3.14, which is fine - the container
+# is the supported path.
+FROM registry.access.redhat.com/ubi9/python-312:latest
+
+USER 0
+WORKDIR /app
+
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY app/ /app/app/
+COPY replay/ /app/replay/
+
+# OpenShift assigns an arbitrary non-root UID; the group must own what it reads.
+RUN chgrp -R 0 /app && chmod -R g=u /app
+USER 1001
+
+EXPOSE 8080
+ENV PYTHONUNBUFFERED=1 \
+    SCANNER_BACKEND=replay \
+    REPLAY_DIR=/app/replay
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", \
+     "--workers", "1", "--timeout-keep-alive", "650"]

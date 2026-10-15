@@ -1,0 +1,17 @@
+---
+# Single-cluster demo: the hub manages only local-cluster. The governance story
+# still holds - policies are authored once, placed by label, and enforced
+# continuously - there is simply one cluster in the placement decision.
+#
+# To grow this to a fleet: import or provision managed clusters, label them
+# (e.g. environment=prod), and the Placement in gitops/components/policies
+# fans the gate out with no change to the policy itself.
+apiVersion: operator.open-cluster-management.io/v1
+kind: MultiClusterHub
+metadata:
+  name: multiclusterhub
+  namespace: open-cluster-management
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  disableHubSelfManagement: false

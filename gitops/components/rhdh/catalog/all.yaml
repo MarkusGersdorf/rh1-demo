@@ -1,0 +1,48 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: retail-banking
+  description: Customer-facing retail banking services.
+spec:
+  owner: payments-team
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: accounts-api
+  description: >-
+    Account and statement API. Subject of the Lightwell Inward walkthrough.
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+    janus-idp.io/tekton: accounts-api
+    lightwell-inward.redhat.com/scanner: 'true'
+  tags: [java, quarkus, pci-scope]
+  links:
+    - url: /lightwell-inward/
+      title: AI code review verdicts
+      icon: security
+spec:
+  type: service
+  lifecycle: production
+  owner: payments-team
+  system: retail-banking
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: payments-team
+  description: Owns retail banking account services.
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: lightwell-inward-templates
+  description: Software templates with the security gate wired in.
+spec:
+  type: url
+  targets:
+    - https://raw.githubusercontent.com/CHANGEME/rh1-demo/main/gitops/components/rhdh/catalog/template-quarkus.yaml

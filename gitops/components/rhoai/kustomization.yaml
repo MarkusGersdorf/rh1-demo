@@ -1,0 +1,11 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - dscinitialization.yaml
+  - datasciencecluster.yaml
+  - model-store-pvc.yaml
+  - model-fetch-job.yaml
+  - servingruntime-llamacpp-cpu.yaml
+  - inferenceservice.yaml
+  # - servingruntime-vllm-gpu.yaml   # uncomment when a GPU node exists

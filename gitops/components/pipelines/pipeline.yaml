@@ -1,0 +1,208 @@
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: lightwell-inward
+  namespace: lightwell-inward
+spec:
+  description: >
+    Verify the dependencies Lightwell covers, then review the code it does not,
+    then build, sign and attest - and refuse to produce an artifact if the
+    review does not pass.
+  params:
+    - name: repo-url
+      type: string
+      default: http://gitea.gitea.svc.cluster.local:3000/demo/accounts-api.git
+    - name: revision
+      type: string
+      default: main
+    - name: base-revision
+      type: string
+      default: ""
+    - name: image
+      type: string
+      default: image-registry.openshift-image-registry.svc:5000/demo-accounts/accounts-api
+  workspaces:
+    - name: source
+  results:
+    - name: image-ref
+      value: $(tasks.build-image.results.image-ref)
+    - name: ai-verdict
+      value: $(tasks.ai-code-review.results.verdict)
+    - name: rekor-log-index
+      value: $(tasks.sign-and-attest.results.rekor-log-index)
+  tasks:
+    - name: fetch-source
+      taskRef:
+        name: fetch-source
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.revision)
+        - name: base-revision
+          value: $(params.base-revision)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # ---- the half Lightwell already covers --------------------------------
+    - name: lightwell-verify
+      runAfter: [fetch-source]
+      taskRef:
+        name: lightwell-verify
+      workspaces:
+        - name: source
+          workspace: source
+
+    # ---- deterministic SAST, which passes clean on the planted flaw -------
+    - name: sast-semgrep
+      runAfter: [fetch-source]
+      taskRef:
+        name: sast-semgrep
+      workspaces:
+        - name: source
+          workspace: source
+
+    # ---- the half nothing covers today -----------------------------------
+    - name: ai-code-review
+      runAfter: [lightwell-verify, sast-semgrep]
+      taskRef:
+        name: ai-code-review
+      params:
+        - name: commit
+          value: $(tasks.fetch-source.results.commit)
+        - name: base-commit
+          value: $(tasks.fetch-source.results.base-commit)
+        - name: repo-url
+          value: $(params.repo-url)
+        - name: semgrep-verdict
+          value: $(tasks.sast-semgrep.results.verdict)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Everything below only runs because ai-code-review exited zero. There is
+    # no `when` clause and no continue-on-failure: a blocking finding means the
+    # artifact is never built, so there is nothing to accidentally deploy.
+    - name: build-image
+      runAfter: [ai-code-review]
+      taskRef:
+        name: build-image
+      params:
+        - name: image
+          value: $(params.image)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: sign-and-attest
+      runAfter: [build-image]
+      taskRef:
+        name: sign-and-attest
+      params:
+        - name: image-ref
+          value: $(tasks.build-image.results.image-ref)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Enterprise Contract reads inside the attestation; RHACS does not.
+    # This is what stops a signed-but-failing artifact being promoted.
+    - name: ec-validate
+      runAfter: [sign-and-attest]
+      taskRef:
+        name: ec-validate
+      params:
+        - name: image-ref
+          value: $(tasks.build-image.results.image-ref)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: acs-image-check
+      runAfter: [build-image]
+      taskRef:
+        name: acs-image-check
+      params:
+        - name: image-ref
+          value: $(tasks.build-image.results.image-ref)
+
+  finally:
+    - name: report
+      taskRef:
+        name: pipeline-report
+      params:
+        - name: ai-verdict
+          value: $(tasks.ai-code-review.results.verdict)
+        - name: ai-findings
+          value: $(tasks.ai-code-review.results.findings-count)
+        - name: top-severity
+          value: $(tasks.ai-code-review.results.top-severity)
+        - name: lightwell-summary
+          value: $(tasks.lightwell-verify.results.summary)
+        - name: semgrep-findings
+          value: $(tasks.sast-semgrep.results.findings-count)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: pipeline-report
+  namespace: lightwell-inward
+spec:
+  description: >
+    Prints the one screen worth projecting. Runs in `finally` so it reports on
+    a blocked run too - which is the run you actually want to show.
+  params:
+    - name: ai-verdict
+      type: string
+      default: unknown
+    - name: ai-findings
+      type: string
+      default: "0"
+    - name: top-severity
+      type: string
+      default: none
+    - name: lightwell-summary
+      type: string
+      default: ""
+    - name: semgrep-findings
+      type: string
+      default: "0"
+  steps:
+    - name: report
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      script: |
+        #!/usr/bin/env bash
+        cat <<BANNER
+
+        ============================================================
+                        L I G H T W E L L   I N W A R D
+        ============================================================
+
+          Dependencies   (Lightwell Network)
+            $(params.lightwell-summary)
+
+          SAST           (Semgrep)
+            $(params.semgrep-findings) finding(s)
+
+          First-party    (Foundation-Sec-8B-Reasoning on RHOAI)
+            verdict         : $(params.ai-verdict)
+            findings        : $(params.ai-findings)
+            top severity    : $(params.top-severity)
+
+        ============================================================
+        BANNER
+
+        if [[ "$(params.ai-verdict)" != "pass" ]]; then
+          cat <<'MSG'
+          No artifact was built. The dependency supply chain was clean and
+          SAST was clean; the code review was not. That gap is the demo.
+        MSG
+        else
+          cat <<'MSG'
+          Image signed and attested. The AI verdict is in Rekor, which means a
+          policy engine can enforce it and you can revoke it later by model
+          digest. That is the Lightwell pattern, pointed inward.
+        MSG
+        fi

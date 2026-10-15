@@ -1,0 +1,42 @@
+---
+# Built in-cluster from this repo so the demo needs no external registry
+# and no local podman. Argo CD creates the BuildConfig; the first build is
+# kicked off by scripts/03-build-scanner.sh (or `oc start-build`).
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: ai-code-review
+  namespace: lightwell-inward
+spec:
+  lookupPolicy:
+    local: true
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: ai-code-review
+  namespace: lightwell-inward
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/CHANGEME/rh1-demo.git
+      ref: main
+    contextDir: components/ai-code-review
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: ai-code-review:latest
+  triggers:
+    - type: ConfigChange
+  resources:
+    requests:
+      cpu: "500m"
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi

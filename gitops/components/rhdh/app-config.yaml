@@ -1,0 +1,64 @@
+---
+# CLUSTER_DOMAIN is a placeholder. Run scripts/01-set-cluster-domain.sh to
+# replace it everywhere and commit the result - Argo CD then reconciles.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rhdh-app-config
+  namespace: rhdh
+data:
+  app-config.yaml: |
+    app:
+      title: Red Hat Developer Hub - Lightwell Inward
+      baseUrl: https://rhdh-rhdh.apps.CLUSTER_DOMAIN
+
+    backend:
+      baseUrl: https://rhdh-rhdh.apps.CLUSTER_DOMAIN
+      cors:
+        origin: https://rhdh-rhdh.apps.CLUSTER_DOMAIN
+      auth:
+        externalAccess:
+          - type: legacy
+            options:
+              subject: lightwell-inward
+              secret: ${BACKEND_SECRET}
+      database:
+        client: better-sqlite3
+        connection: ':memory:'
+
+    auth:
+      environment: development
+      providers:
+        guest:
+          dangerouslyAllowOutsideDevelopment: true
+
+    integrations:
+      gitea:
+        - host: gitea-gitea.apps.CLUSTER_DOMAIN
+          baseUrl: https://gitea-gitea.apps.CLUSTER_DOMAIN
+          username: ${GITEA_USERNAME}
+          password: ${GITEA_PASSWORD}
+
+    catalog:
+      import:
+        entityFilename: catalog-info.yaml
+      rules:
+        - allow: [Component, System, API, Resource, Location, Template]
+      locations:
+        - type: url
+          target: https://raw.githubusercontent.com/CHANGEME/rh1-demo/main/gitops/components/rhdh/catalog/all.yaml
+
+    # Surfaces the scanner's verdicts on the component page. The scanner's
+    # /api/reviews is plain JSON, so no custom plugin is needed for the demo.
+    proxy:
+      endpoints:
+        '/lightwell-inward':
+          target: http://ai-code-review.lightwell-inward.svc.cluster.local:8080
+          changeOrigin: true
+
+    techdocs:
+      builder: 'local'
+      generator:
+        runIn: 'local'
+      publisher:
+        type: 'local'

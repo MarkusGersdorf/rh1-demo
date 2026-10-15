@@ -1,0 +1,8 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rhacm-policy.yaml
+  # Synced by the RHACM Policy below rather than directly, so the governance
+  # story is real: RHACM owns the policy's presence on the cluster.
+  # - acs-security-policy.yaml

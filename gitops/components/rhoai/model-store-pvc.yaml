@@ -1,0 +1,14 @@
+---
+# Holds the HF snapshot and the quantised GGUF. 16GB of safetensors plus a
+# ~4.9GB Q4_K_M plus conversion scratch - 80Gi is not generous, it is correct.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-store
+  namespace: lightwell-inward
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 80Gi

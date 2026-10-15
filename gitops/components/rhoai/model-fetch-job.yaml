@@ -1,0 +1,149 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-fetch-script
+  namespace: lightwell-inward
+data:
+  fetch.sh: |
+    #!/usr/bin/env bash
+    # Populate /mnt/models with a GGUF of the Cisco security reasoning model.
+    # Idempotent: re-running after success is a no-op, so Argo CD can re-sync freely.
+    set -euo pipefail
+
+    MODEL_REPO="${MODEL_REPO:-fdtn-ai/Foundation-Sec-8B-Reasoning}"
+    QUANT="${QUANT:-Q4_K_M}"
+    TARGET="/mnt/models/foundation-sec-8b-reasoning-${QUANT}.gguf"
+    SNAPSHOT="/mnt/models/hf-snapshot"
+
+    if [[ -s "${TARGET}" ]]; then
+      echo "[fetch] ${TARGET} already present ($(du -h "${TARGET}" | cut -f1)) - nothing to do."
+      exit 0
+    fi
+
+    # Fast path: a prebuilt GGUF, if you have one mirrored internally. Much
+    # quicker than converting, and the usual choice for a repeatable demo build.
+    if [[ -n "${MODEL_GGUF_URL:-}" ]]; then
+      echo "[fetch] downloading prebuilt GGUF from MODEL_GGUF_URL"
+      curl -fsSL --retry 5 --retry-delay 10 -o "${TARGET}.part" "${MODEL_GGUF_URL}"
+      mv "${TARGET}.part" "${TARGET}"
+      echo "[fetch] done: $(du -h "${TARGET}" | cut -f1)"
+      exit 0
+    fi
+
+    # Slow path: pull the HF repo and quantise locally.
+    echo "[fetch] no MODEL_GGUF_URL set - converting ${MODEL_REPO} locally."
+    echo "[fetch] expect ~16GB of download plus conversion. This is a one-time cost."
+
+    command -v hf >/dev/null 2>&1 || pip install --quiet --no-cache-dir "huggingface_hub[cli]"
+
+    if [[ -z "${HF_TOKEN:-}" ]]; then
+      echo "[fetch] WARNING: HF_TOKEN is empty. Foundation-Sec is a Llama derivative"
+      echo "[fetch] behind a license click-through; the download will 401 without a"
+      echo "[fetch] token from an account that has accepted it. See docs/SETUP.md."
+    fi
+
+    hf download "${MODEL_REPO}" \
+      --local-dir "${SNAPSHOT}" \
+      --exclude "original/*" "*.pth" "*.msgpack" "*.h5"
+
+    # Locate llama.cpp tooling. Paths have moved between image generations, so
+    # search rather than hardcode, and say something useful if it is absent.
+    CONVERT="$(find / -maxdepth 4 -name 'convert_hf_to_gguf.py' -type f 2>/dev/null | head -1 || true)"
+    QUANTIZE="$(command -v llama-quantize || find / -maxdepth 4 -name 'llama-quantize' -type f 2>/dev/null | head -1 || true)"
+
+    if [[ -z "${CONVERT}" || -z "${QUANTIZE}" ]]; then
+      echo "[fetch] ERROR: llama.cpp conversion tooling not found in this image."
+      echo "[fetch] convert_hf_to_gguf.py=${CONVERT:-<missing>} llama-quantize=${QUANTIZE:-<missing>}"
+      echo "[fetch] Either use the ':full' llama.cpp image, or set MODEL_GGUF_URL"
+      echo "[fetch] to a GGUF you quantised elsewhere."
+      exit 1
+    fi
+
+    echo "[fetch] converting to f16 GGUF"
+    python3 "${CONVERT}" "${SNAPSHOT}" --outfile /mnt/models/fsr-f16.gguf --outtype f16
+
+    echo "[fetch] quantising to ${QUANT}"
+    "${QUANTIZE}" /mnt/models/fsr-f16.gguf "${TARGET}.part" "${QUANT}"
+    mv "${TARGET}.part" "${TARGET}"
+
+    # Reclaim the intermediates; the PVC is sized for this but there is no
+    # reason to keep 16GB of safetensors on a demo cluster.
+    rm -f /mnt/models/fsr-f16.gguf
+    rm -rf "${SNAPSHOT}"
+
+    echo "[fetch] done: $(du -h "${TARGET}" | cut -f1)"
+    sha256sum "${TARGET}" | tee /mnt/models/model.sha256
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-fetch
+  namespace: lightwell-inward
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+    # The job is immutable once created; let Argo replace it rather than fail
+    # to patch it on every subsequent sync.
+    argocd.argoproj.io/sync-options: Replace=true
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app: model-fetch
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: fetch
+          image: ghcr.io/ggml-org/llama.cpp:full
+          command: ["bash", "/scripts/fetch.sh"]
+          env:
+            - name: MODEL_REPO
+              value: fdtn-ai/Foundation-Sec-8B-Reasoning
+            - name: QUANT
+              value: Q4_K_M
+            # Set this in the ConfigMap below to skip local conversion entirely.
+            - name: MODEL_GGUF_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: model-fetch-config
+                  key: MODEL_GGUF_URL
+                  optional: true
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: huggingface-token
+                  key: token
+                  optional: true
+            - name: HF_HUB_ENABLE_HF_TRANSFER
+              value: "0"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+            limits:
+              cpu: "8"
+              memory: 24Gi
+          volumeMounts:
+            - name: model-store
+              mountPath: /mnt/models
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: model-store
+          persistentVolumeClaim:
+            claimName: model-store
+        - name: scripts
+          configMap:
+            name: model-fetch-script
+            defaultMode: 0755
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-fetch-config
+  namespace: lightwell-inward
+data:
+  # Put a GGUF URL here (internal mirror or a community quant you have vetted)
+  # to turn the one-time 40-minute conversion into a 3-minute download.
+  MODEL_GGUF_URL: ""

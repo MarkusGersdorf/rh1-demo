@@ -1,0 +1,260 @@
+name: CI
+
+# What this protects, in priority order:
+#   1. The scanner's gate logic and its fail-closed guarantee.
+#   2. The demo's own integrity - that the Java source, the committed diffs
+#      and the replay cache still agree. If they drift, the demo breaks on
+#      stage rather than here.
+#   3. That every manifest Argo CD will apply actually parses and builds.
+#   4. That both Containerfiles still build.
+#
+# It deliberately does NOT push images. See .github/workflows/publish-scanner.yml
+# and the note in docs/SETUP.md for why, and for the escape hatch.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scanner:
+    name: Scanner tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: components/ai-code-review
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches the ubi9/python-312 base image, so the pinned
+          # requirements.txt resolves the same way it does in the container.
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: components/ai-code-review/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests with coverage
+        run: pytest --cov=app --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-coverage
+          path: components/ai-code-review/coverage.xml
+          if-no-files-found: warn
+
+  demo-app:
+    name: Demo app tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: components/vuln-demo-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run the shipped test suite
+        # These three tests MUST pass on the vulnerable code. That is not an
+        # accident - Act 2 of the walkthrough depends on "the tests are green
+        # and the code is still wrong". A failure here means either the app
+        # broke or somebody added the cross-tenant test that belongs in the
+        # scanner's test_demo_integrity.py instead.
+        run: mvn -B --no-transfer-progress verify
+
+      - name: Upload surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-app-surefire
+          path: components/vuln-demo-app/target/surefire-reports/
+          if-no-files-found: ignore
+
+  manifests:
+    name: Manifests and scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install pyyaml
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.32.0
+
+      - name: Every YAML document parses
+        run: |
+          python - <<'PY'
+          import glob, sys, yaml
+          failed = total = 0
+          for path in sorted(glob.glob("gitops/**/*.yaml", recursive=True)):
+              try:
+                  docs = [d for d in yaml.safe_load_all(open(path)) if d]
+              except yaml.YAMLError as exc:
+                  print(f"FAIL {path}: {exc}")
+                  failed += 1
+                  continue
+              total += len(docs)
+              for doc in docs:
+                  if not isinstance(doc, dict) or "kind" not in doc or "apiVersion" not in doc:
+                      print(f"FAIL {path}: document missing kind/apiVersion")
+                      failed += 1
+          print(f"{total} documents parsed, {failed} failure(s)")
+          sys.exit(1 if failed else 0)
+          PY
+
+      - name: Every kustomization builds
+        run: |
+          failed=0
+          for dir in gitops/components/*/; do
+            [ -f "$dir/kustomization.yaml" ] || continue
+            if out=$(kubectl kustomize "$dir" 2>&1); then
+              printf 'ok   %-24s %s resources\n' "$(basename "$dir")" "$(grep -c '^kind:' <<< "$out")"
+            else
+              printf 'FAIL %-24s %s\n' "$(basename "$dir")" "$(head -3 <<< "$out")"
+              failed=1
+            fi
+          done
+          exit $failed
+
+      - name: Argo CD Applications are well formed
+        run: |
+          python - <<'PY'
+          import glob, sys, yaml
+          failed = 0
+          for path in sorted(glob.glob("gitops/apps/*.yaml")) + ["gitops/bootstrap/03-root-application.yaml"]:
+              for doc in yaml.safe_load_all(open(path)):
+                  if not doc or doc.get("kind") != "Application":
+                      continue
+                  src = doc["spec"]["source"]
+                  if not src.get("repoURL", "").startswith("http"):
+                      print(f"FAIL {path}: repoURL is not an http(s) URL")
+                      failed = 1
+                  if not src.get("path", "").startswith("gitops/"):
+                      print(f"FAIL {path}: path {src.get('path')!r} is outside gitops/")
+                      failed = 1
+          print("Applications checked")
+          sys.exit(failed)
+          PY
+
+      - name: Referenced component paths exist
+        # An Application pointing at a directory that does not exist syncs
+        # green and deploys nothing, which is the worst possible failure.
+        run: |
+          python - <<'PY'
+          import glob, os, sys, yaml
+          failed = 0
+          for path in sorted(glob.glob("gitops/apps/*.yaml")):
+              for doc in yaml.safe_load_all(open(path)):
+                  if not doc or doc.get("kind") != "Application":
+                      continue
+                  target = doc["spec"]["source"]["path"]
+                  if not os.path.isdir(target):
+                      print(f"FAIL {path}: source path {target!r} does not exist")
+                      failed = 1
+                  else:
+                      print(f"ok   {doc['metadata']['name']} -> {target}")
+          sys.exit(failed)
+          PY
+
+      - name: Shell scripts parse
+        run: |
+          failed=0
+          for f in scripts/*.sh; do
+            bash -n "$f" || { echo "FAIL $f"; failed=1; }
+          done
+          exit $failed
+
+      - name: Embedded Python in Tekton tasks parses
+        # These scripts only run inside a cluster, so a syntax error would
+        # otherwise surface for the first time mid-pipeline.
+        run: |
+          python - <<'PY'
+          import ast, re, sys, yaml
+          failed = 0
+          for doc in yaml.safe_load_all(open("gitops/components/pipelines/tasks.yaml")):
+              if not doc or doc.get("kind") != "Task":
+                  continue
+              for step in doc["spec"].get("steps", []):
+                  script = step.get("script", "")
+                  if not script.startswith("#!/usr/bin/env python3"):
+                      continue
+                  body = re.sub(r"\$\([a-zA-Z.\-]+\)", "PLACEHOLDER",
+                                "\n".join(script.split("\n")[1:]))
+                  name = f"{doc['metadata']['name']}/{step['name']}"
+                  try:
+                      ast.parse(body)
+                      print(f"ok   {name}")
+                  except SyntaxError as exc:
+                      print(f"FAIL {name}: {exc}")
+                      failed = 1
+          sys.exit(failed)
+          PY
+
+      - name: No unresolved placeholders in the application sources
+        # CLUSTER_DOMAIN and CHANGEME are resolved per-cluster by
+        # scripts/01-set-cluster-domain.sh, so they are expected in gitops/ on
+        # main, and the scripts that rewrite them naturally mention them.
+        # The invariant worth enforcing is that neither the scanner nor the
+        # demo app ever carries a cluster-specific placeholder.
+        run: |
+          if grep -rn 'CLUSTER_DOMAIN\|CHANGEME' components/ 2>/dev/null; then
+            echo "FAIL: placeholder leaked into components/"
+            exit 1
+          fi
+          echo "ok: components/ is cluster-agnostic"
+
+  images:
+    name: Container images build
+    runs-on: ubuntu-latest
+    # No registry login and no push. These prove the Containerfiles are
+    # valid; the cluster builds the real images itself.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the scanner image
+        uses: docker/build-push-action@v6
+        with:
+          context: components/ai-code-review
+          file: components/ai-code-review/Containerfile
+          push: false
+          load: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build the demo app image
+        # Multi-stage: compiles the Quarkus app, so this also proves the
+        # Red Hat GA Maven repository in pom.xml resolves.
+        uses: docker/build-push-action@v6
+        with:
+          context: components/vuln-demo-app
+          file: components/vuln-demo-app/Containerfile
+          push: false
+          load: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

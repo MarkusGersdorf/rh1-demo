@@ -1,0 +1,11 @@
+# Generated at setup time: the local clone of the demo repo and the cosign
+# public key copy. Neither belongs in git.
+.local/
+
+# Java build output
+target/
+
+# Local python venv for the scanner
+.venv/
+__pycache__/
+*.pyc

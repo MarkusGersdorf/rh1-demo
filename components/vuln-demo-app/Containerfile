@@ -1,0 +1,25 @@
+# Multi-stage: build the Quarkus JVM artifact, then a minimal runtime image.
+# The pipeline's build-image task just runs this.
+FROM registry.access.redhat.com/ubi9/openjdk-21:latest AS build
+USER 0
+WORKDIR /build
+COPY pom.xml .
+# Warm the dependency cache in its own layer so a code-only change rebuilds fast.
+RUN mvn -B -q dependency:go-offline -DskipTests || true
+COPY src ./src
+RUN mvn -B -DskipTests clean package
+
+FROM registry.access.redhat.com/ubi9/openjdk-21-runtime:latest
+WORKDIR /deployments
+# OpenShift runs this as an arbitrary high UID with primary GID 0, so the
+# layers are owned by group 0 and group-readable rather than relying on the
+# other-read bit. This is the pattern Red Hat's own Quarkus images document.
+COPY --from=build --chown=185:0 --chmod=0775 /build/target/quarkus-app/lib/      ./lib/
+COPY --from=build --chown=185:0 --chmod=0775 /build/target/quarkus-app/*.jar     ./
+COPY --from=build --chown=185:0 --chmod=0775 /build/target/quarkus-app/app/      ./app/
+COPY --from=build --chown=185:0 --chmod=0775 /build/target/quarkus-app/quarkus/  ./quarkus/
+EXPOSE 8080
+# Numeric and non-zero so `runAsNonRoot: true` passes kubelet's image check.
+# The actual UID at runtime is assigned by the SCC and will not be 185.
+USER 185
+ENTRYPOINT ["java", "-jar", "/deployments/quarkus-run.jar"]

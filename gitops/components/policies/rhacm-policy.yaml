@@ -1,0 +1,154 @@
+---
+# RHACM Governance.
+#
+# Why this layer exists, and it is worth saying on stage: without it, the gate
+# is a convention inside one pipeline in one namespace. Anyone with edit rights
+# can remove a Tekton task. Expressed as RHACM policy with selfHeal, the gate
+# becomes a property of the cluster - and of every cluster matching the
+# placement - that is continuously reconciled and reported on.
+#
+# Single-cluster demo: the placement matches local-cluster. Add managed
+# clusters with the same label and the gate fans out unchanged.
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: lightwell-inward-gate
+  namespace: open-cluster-management
+  annotations:
+    policy.open-cluster-management.io/categories: SI System and Information Integrity
+    policy.open-cluster-management.io/controls: SI-7 Software Firmware and Information Integrity
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/description: >-
+      Requires that every workload image is signed by the Lightwell Inward
+      signer, and that RHACS admission control is enabled to enforce it.
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    # ---- 1. the RHACS policy must exist -----------------------------------
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-attestation-policy-present
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: config.stackrox.io/v1alpha1
+                kind: SecurityPolicy
+                metadata:
+                  name: lightwell-inward-attestation-required
+                  namespace: stackrox
+                spec:
+                  policyName: "Lightwell Inward - code review attestation required"
+                  description: >-
+                    Blocks deployment of any image that is not signed by the
+                    Lightwell Inward signer.
+                  rationale: >-
+                    An unverifiable security review is not a review.
+                  remediation: >-
+                    Run the change through the lightwell-inward pipeline.
+                  categories:
+                    - "Supply Chain Security"
+                  severity: HIGH_SEVERITY
+                  enforcementBehaviors:
+                    - DEPLOY_TIME_ENFORCEMENT
+                  lifecycleStages:
+                    - DEPLOY
+                  policySections:
+                    - sectionName: "Unsigned or untrusted signature"
+                      policyGroups:
+                        - fieldName: "Image Signature Verified By"
+                          booleanOperator: OR
+                          negate: true
+                          values:
+                            - value: "lightwell-inward-signer"
+                  exclusions:
+                    - name: "exclude lightwell-inward infrastructure"
+                      deployment:
+                        scope:
+                          namespace: "lightwell-inward"
+                    - name: "exclude platform namespaces"
+                      deployment:
+                        scope:
+                          namespace: "^(openshift|kube|stackrox|rhdh|gitea|open-cluster-management|redhat-ods|trusted-artifact-signer).*"
+
+    # ---- 2. admission control must stay switched on -----------------------
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-admission-control-enabled
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: platform.stackrox.io/v1alpha1
+                kind: SecuredCluster
+                metadata:
+                  name: stackrox-secured-cluster-services
+                  namespace: stackrox
+                spec:
+                  admissionControl:
+                    listenOnCreates: true
+                    listenOnUpdates: true
+                    listenOnEvents: true
+
+    # ---- 3. the demo namespace must not be exempt -------------------------
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: demo-namespace-not-exempt
+        spec:
+          remediationAction: enforce
+          severity: medium
+          object-templates:
+            # RHACS honours this annotation as a break-glass bypass. If
+            # someone sets it on the demo namespace the gate silently stops
+            # applying, so the policy asserts its absence.
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: demo-accounts
+                  annotations:
+                    admission.stackrox.io/break-glass: "true"
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: lightwell-inward-clusters
+  namespace: open-cluster-management
+spec:
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            # Single cluster today. Label managed clusters with
+            # local-cluster=false and add environment selectors here to
+            # enforce differently per environment.
+            - key: name
+              operator: In
+              values:
+                - local-cluster
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: lightwell-inward-gate-binding
+  namespace: open-cluster-management
+placementRef:
+  name: lightwell-inward-clusters
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: lightwell-inward-gate
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

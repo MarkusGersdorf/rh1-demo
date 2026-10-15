@@ -1,0 +1,24 @@
+diff --git a/src/main/java/com/redhat/demo/accounts/AccountResource.java b/src/main/java/com/redhat/demo/accounts/AccountResource.java
+index 95aa027..a35f76a 100644
+--- a/src/main/java/com/redhat/demo/accounts/AccountResource.java
++++ b/src/main/java/com/redhat/demo/accounts/AccountResource.java
+@@ -67,6 +67,7 @@ public class AccountResource {
+             if (!account.ownerId().equals(jwt.getSubject())) {
+                 LOG.warnf("ownership mismatch: subject=%s account=%s owner=%s",
+                         jwt.getSubject(), id, account.ownerId());
++                return Response.status(Response.Status.FORBIDDEN).build();
+             }
+ 
+             List<Statement> statements = repository.statementsFor(
+@@ -78,9 +79,9 @@ public class AccountResource {
+                     "count", statements.size(),
+                     "statements", statements)).build();
+         } catch (DateTimeParseException e) {
++            LOG.debugf("unparseable date range from=%s to=%s", from, to);
+             return Response.status(Response.Status.BAD_REQUEST)
+-                    .entity(Map.of("error", e.getMessage(),
+-                                   "detail", e.toString()))
++                    .entity(Map.of("error", "from and to must be ISO-8601 dates (yyyy-MM-dd)"))
+                     .build();
+         }
+     }

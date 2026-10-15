@@ -1,0 +1,130 @@
+---
+# Gitea push -> EventListener -> PipelineRun.
+#
+# Gitea's push payload is GitHub-shaped, so `before` and `after` give the exact
+# revision range the developer pushed. That is what gets reviewed - not the
+# whole repo.
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: gitea-push
+  namespace: lightwell-inward
+spec:
+  params:
+    - name: repo-url
+      value: $(body.repository.clone_url)
+    - name: revision
+      value: $(body.after)
+    - name: base-revision
+      value: $(body.before)
+    - name: repo-name
+      value: $(body.repository.name)
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: lightwell-inward
+  namespace: lightwell-inward
+spec:
+  params:
+    - name: repo-url
+    - name: revision
+    - name: base-revision
+      default: ""
+    - name: repo-name
+      default: accounts-api
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: lightwell-inward-
+        namespace: lightwell-inward
+        labels:
+          lightwell-inward.redhat.com/repo: $(tt.params.repo-name)
+      spec:
+        pipelineRef:
+          name: lightwell-inward
+        taskRunTemplate:
+          serviceAccountName: pipeline-runner
+        timeouts:
+          pipeline: 1h0m0s
+        params:
+          - name: repo-url
+            value: $(tt.params.repo-url)
+          - name: revision
+            value: $(tt.params.revision)
+          - name: base-revision
+            value: $(tt.params.base-revision)
+          - name: image
+            value: image-registry.openshift-image-registry.svc:5000/demo-accounts/$(tt.params.repo-name)
+        workspaces:
+          - name: source
+            volumeClaimTemplate:
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                resources:
+                  requests:
+                    storage: 5Gi
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: lightwell-inward
+  namespace: lightwell-inward
+spec:
+  serviceAccountName: pipeline-runner
+  triggers:
+    - name: gitea-push
+      interceptors:
+        - ref:
+            name: cel
+          params:
+            - name: filter
+              # Ignore branch deletions, which arrive with an all-zero `after`.
+              value: >-
+                body.after != '0000000000000000000000000000000000000000'
+      bindings:
+        - ref: gitea-push
+      template:
+        ref: lightwell-inward
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pipeline-runner-triggers
+  namespace: lightwell-inward
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-runner
+    namespace: lightwell-inward
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-triggers-eventlistener-roles
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pipeline-runner-triggers-cluster
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-runner
+    namespace: lightwell-inward
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-triggers-eventlistener-clusterroles
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: lightwell-inward-webhook
+  namespace: lightwell-inward
+spec:
+  to:
+    kind: Service
+    name: el-lightwell-inward
+  port:
+    targetPort: http-listener
+  tls:
+    termination: edge

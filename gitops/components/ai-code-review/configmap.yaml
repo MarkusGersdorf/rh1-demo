@@ -1,0 +1,30 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-code-review-config
+  namespace: lightwell-inward
+data:
+  # replay   - captured output, deterministic, instant. Stage default.
+  # llamacpp - live CPU inference via the KServe InferenceService.
+  # vllm     - live GPU inference.
+  SCANNER_BACKEND: "replay"
+
+  MODEL_ENDPOINT: "http://foundation-sec-reasoning-predictor.lightwell-inward.svc.cluster.local:8080"
+  MODEL_NAME: "fdtn-ai/Foundation-Sec-8B-Reasoning"
+  MODEL_MAX_TOKENS: "2048"
+  MODEL_TIMEOUT_SECONDS: "600"
+  MODEL_SERVED_BY: "openshift-ai/kserve"
+
+  # The gate. A finding blocks the build when its severity is listed here AND
+  # its confidence clears MIN_CONFIDENCE.
+  FAIL_ON: "critical,high"
+  MIN_CONFIDENCE: "medium"
+
+  # Set to "live" to send replay misses to the model instead of erroring.
+  # Useful during setup; think before enabling it on stage, since a miss then
+  # costs you 60-90 seconds of silence.
+  REPLAY_FALLBACK: ""
+  REPLAY_MAX_DELAY_SECONDS: "3"
+
+  LOG_LEVEL: "INFO"

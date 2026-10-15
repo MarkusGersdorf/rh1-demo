@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "PROVENANCE: hand-authored seed, NOT a model capture.",
+    "The clean-run answer. An empty findings list is the correct result here;",
+    "the prompt explicitly tells the model not to invent a finding to look useful."
+  ],
+  "provenance": "hand-authored-seed",
+  "label": "fix/ownership-check (clean)",
+  "fingerprint": "dd27541125d67ba88585a330915054f7317367de0c223e3c4b0597154fbb3ab2",
+  "match": {
+    "priority": 20,
+    "contains_all": [
+      "+                return Response.status(Response.Status.FORBIDDEN).build();"
+    ]
+  },
+  "latency_ms": 41880,
+  "usage": {
+    "prompt_tokens": 2402,
+    "completion_tokens": 212,
+    "total_tokens": 2614
+  },
+  "response": {
+    "summary": "The ownership check now returns 403 before any statement data is read, closing the cross-tenant access path. The error response no longer reflects parser internals. No new security issues introduced by this change.",
+    "findings": []
+  }
+}

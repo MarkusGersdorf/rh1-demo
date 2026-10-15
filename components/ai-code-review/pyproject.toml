@@ -1,0 +1,28 @@
+# Test configuration only. The service is run by uvicorn from the
+# Containerfile, not installed as a package.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers --strict-config"
+filterwarnings = [
+    "error",
+    # starlette's TestClient warns about httpx on newer versions; it is a test
+    # -only dependency and does not affect the service.
+    "ignore::DeprecationWarning",
+    "ignore:Using `httpx` with `starlette.testclient`:UserWarning",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+# The service is small and the logic is the product, so hold a real bar.
+fail_under = 90
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
