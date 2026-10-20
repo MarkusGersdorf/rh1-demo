@@ -35,7 +35,7 @@ spec:
           resources:
             requests:
               storage: 5Gi
-    - name: antares
+    - name: antares-cli
       persistentVolumeClaim:
         claimName: antares-cli
 YAML

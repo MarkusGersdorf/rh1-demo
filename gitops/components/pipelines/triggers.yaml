@@ -66,7 +66,7 @@ spec:
                   requests:
                     storage: 5Gi
           # Read-only in practice: populated once by the antares-fetch job.
-          - name: antares
+          - name: antares-cli
             persistentVolumeClaim:
               claimName: antares-cli
 ---

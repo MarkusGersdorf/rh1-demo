@@ -229,7 +229,7 @@ spec:
       default: "5"
   workspaces:
     - name: source
-    - name: antares
+    - name: antares-cli
       description: PVC holding the Antares CLI extracted by the antares-fetch job.
   results:
     - name: findings-count
@@ -253,7 +253,7 @@ spec:
         rm -rf "${OUT}"
         mkdir -p /tmp/antares-data
 
-        CLI="$(workspaces.antares.path)/venv/bin/antares"
+        CLI="$(workspaces.antares-cli.path)/venv/bin/antares"
         if [[ ! -x "${CLI}" ]]; then
           echo "Antares CLI not found at ${CLI}."
           echo "The CLI ships inside the gated Hugging Face model download, so the"
@@ -316,7 +316,7 @@ spec:
         # Carry the served model's digest alongside the report so the
         # attestation can pin Stage A. Without it the predicate records
         # "unpinned" and Enterprise Contract rejects the build.
-        src = pathlib.Path("$(workspaces.antares.path)/antares.sha256")
+        src = pathlib.Path("$(workspaces.antares-cli.path)/antares.sha256")
         if src.is_file():
             dest = report.parent / "model.sha256"
             dest.write_text(src.read_text().strip())

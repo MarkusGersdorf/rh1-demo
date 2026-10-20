@@ -24,7 +24,7 @@ spec:
       default: image-registry.openshift-image-registry.svc:5000/demo-accounts/accounts-api
   workspaces:
     - name: source
-    - name: antares
+    - name: antares-cli
       description: Holds the Antares CLI, extracted by the antares-fetch job.
   results:
     - name: image-ref
@@ -79,8 +79,8 @@ spec:
       workspaces:
         - name: source
           workspace: source
-        - name: antares
-          workspace: antares
+        - name: antares-cli
+          workspace: antares-cli
 
     # ---- Stage B: the half nothing covers today --------------------------
     - name: ai-code-review
