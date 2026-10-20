@@ -1,9 +1,10 @@
 """Stage A ingestion, exercised against the real vendored Antares output.
 
-These run against `tests/fixtures/antares/cpu-sweep`, a pinned copy of a
-genuine recorded CPU run from sroecker/supreme-couscous (MIT) - not
-hand-written data. That matters: the parser's job is to match a format this
-project does not control. See `tests/fixtures/antares/PROVENANCE.md`.
+These run against `antares/reports/cpu-sweep` in the pinned `antares`
+submodule - a genuine recorded CPU run from sroecker/supreme-couscous (MIT),
+not hand-written data. That matters: the parser's job is to match a format
+this project does not control, and the submodule pin means an upstream push
+cannot change it from under these tests.
 """
 
 import json

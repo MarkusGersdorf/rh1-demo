@@ -41,7 +41,8 @@ well as the weights. Accept both licences on the account you use.
 
 ```sh
 # Fork this repo first - Argo CD and RHDH both read from your fork, not mine.
-git clone https://github.com/<you>/rh1-demo.git && cd rh1-demo
+# --recurse-submodules brings in the pinned antares/ demo repo.
+git clone --recurse-submodules https://github.com/<you>/rh1-demo.git && cd rh1-demo
 oc login ...
 ./scripts/00-prereqs.sh
 ```
@@ -279,9 +280,7 @@ straight back.
 ## Expect Stage A to be noisy
 
 Upstream's own recorded results are worth reading before you trust Stage A on
-stage. One of those runs is pinned here as test data
-(`components/ai-code-review/tests/fixtures/antares/`); the rest are in
-[sroecker/supreme-couscous](https://github.com/sroecker/supreme-couscous):
+stage. They are in the pinned `antares/` submodule under `antares/reports/`:
 
 - A single-file sweep on CPU took **167 s** with 47 tool calls, 7 of which failed.
 - Antares examined **3 of 944** CWE classes under `--max-cwes 3`.

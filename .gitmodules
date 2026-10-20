@@ -1,0 +1,3 @@
+[submodule "antares"]
+	path = antares
+	url = https://github.com/sroecker/supreme-couscous.git

@@ -119,7 +119,7 @@ gates anything. See `docs/ARCHITECTURE.md` for why.
 | `test_attest.py` | The in-toto statement — subject binding, scope counting, and that the reviewer block is fully pinned |
 | `test_api.py` | The endpoints as Tekton drives them, plus the fail-closed guarantee |
 | `test_prompts.py` | That the prompt version is pinned and the prompt still scopes out dependencies |
-| `test_localizer.py` | Stage A ingestion, run against a pinned copy of real Antares output in `tests/fixtures/antares/` |
+| `test_localizer.py` | Stage A ingestion, run against real Antares output in the pinned `antares/` submodule |
 | `test_demo_integrity.py` | **The demo's premise.** See below. |
 
 ### test_demo_integrity.py

@@ -74,6 +74,7 @@ gitops/
   bootstrap/           the two things you apply by hand
   apps/                Argo CD app-of-apps
   components/          every operator, CR and workload
+antares/               submodule: sroecker/supreme-couscous, pinned (the demo part)
 components/
   ai-code-review/      the scanner service (FastAPI + model backends + attestation)
     tests/             165 tests, incl. demo-integrity guards
@@ -108,22 +109,24 @@ Actual coverage is 98%.
 - Running it on stage: **[docs/DEMO-SCRIPT.md](docs/DEMO-SCRIPT.md)**
 - Understanding the design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 
-## Credits
+## The demo is two repos
 
-Stage A comes from [**sroecker/supreme-couscous**](https://github.com/sroecker/supreme-couscous)
-— the *Antares local POC* by **Steffen Röcker**, MIT licensed. It covers the
-inner developer loop: Antares launchers, vulnerable/fixed fixtures, recorded
-evaluation runs and a VS Code extension. This repo covers the outer loop —
-cluster, signing, enforcement, governance. **Use them together.**
+| | |
+|---|---|
+| **this repo** | the **infra** part — cluster, GitOps, pipeline, signing, enforcement, governance |
+| **`antares/`** | the **demo** part — [sroecker/supreme-couscous](https://github.com/sroecker/supreme-couscous), the *Antares local POC* by **Steffen Röcker** (MIT): Antares launchers, vulnerable/fixed fixtures, recorded evaluation runs and a VS Code extension covering the inner developer loop |
 
-That repo is **linked, not vendored.** The only thing copied here is a pinned
-36 KB sample of one real recorded run, in
-`components/ai-code-review/tests/fixtures/antares/`, used as test data so the
-parser is verified against output this project does not control. Its
-`PROVENANCE.md` records the source commit, and
-`scripts/refresh-antares-fixture.sh` updates it deliberately.
+`antares/` is a git submodule **pinned to an exact commit** (`0b6b7a0`,
+upstream tag `v0.4.7`), so upstream pushes never change what this repo builds
+against until the pin is moved on purpose.
 
-Neither the Antares model weights nor the Antares CLI are in this repository.
+```sh
+git clone --recurse-submodules https://github.com/MarkusGersdorf/rh1-demo.git
+# already cloned:
+git submodule update --init --recursive
+```
+
+Neither the Antares model weights nor the Antares CLI are in either repository.
 Both are gated Cisco artifacts fetched at cluster-build time with a Hugging
 Face token.
 

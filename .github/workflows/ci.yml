@@ -35,6 +35,10 @@ jobs:
         working-directory: components/ai-code-review
     steps:
       - uses: actions/checkout@v4
+        with:
+          # test_localizer.py runs against the recorded Antares output in the
+          # pinned `antares` submodule. Public upstream, so no credentials.
+          submodules: true
 
       - uses: actions/setup-python@v5
         with:
@@ -46,6 +50,21 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
+
+      - name: Antares submodule is at the pinned commit
+        working-directory: .
+        run: |
+          # A submodule stores one exact commit. If this ever reports dirty or
+          # missing, the pin and the checkout disagree and the fixtures are not
+          # what the tests think they are.
+          git submodule status antares
+          test -f antares/reports/cpu-sweep/report.json \
+            || { echo "FAIL: submodule not checked out"; exit 1; }
+          status="$(git submodule status antares)"
+          case "${status}" in
+            [-+]*) echo "FAIL: submodule is uninitialised or modified"; exit 1 ;;
+          esac
+          echo "ok: pinned at ${status}"
 
       - name: Run tests with coverage
         run: pytest --cov=app --cov-report=term-missing --cov-report=xml

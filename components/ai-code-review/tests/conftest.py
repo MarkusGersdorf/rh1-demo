@@ -68,17 +68,27 @@ def make_request():
     return _make
 
 
-# A pinned copy of real upstream output, not hand-written data. See
-# tests/fixtures/antares/PROVENANCE.md for the source commit and why it is
-# frozen rather than tracked as a submodule.
-ANTARES_REPORT = (Path(__file__).resolve().parent / "fixtures" / "antares"
-                  / "cpu-sweep" / "report.json")
+# Real recorded output from the pinned `antares/` submodule, not hand-written
+# data: the parser tracks a report format this project does not control, so
+# the fixtures have to be genuine. The submodule is pinned to a commit, so an
+# upstream push cannot change these from under the tests.
+ANTARES_REPORT = (REPO_ROOT / "antares" / "reports" / "cpu-sweep" / "report.json")
 
 
 @pytest.fixture
 def antares_report_dir(tmp_path):
-    """A copy of the pinned CPU sweep, so tests run against real output."""
+    """A copy of the submodule's recorded CPU sweep."""
     import shutil
+
+    if not ANTARES_REPORT.is_file():
+        pytest.fail(
+            "The `antares` submodule is not checked out, so there is no real "
+            "Antares output to test the parser against.\n\n"
+            "    git submodule update --init --recursive\n\n"
+            f"(expected {ANTARES_REPORT})",
+            pytrace=False,
+        )
+
     src = ANTARES_REPORT.parent
     dest = tmp_path / "antares-report"
     shutil.copytree(src, dest)

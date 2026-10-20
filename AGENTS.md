@@ -15,27 +15,50 @@ Red Hat product, and `README.md` says so deliberately.
 Target: OpenShift 4.22, single cluster, **no GPU**. Everything on the cluster is
 installed by Argo CD from this repo.
 
-Stage A comes from
-**[sroecker/supreme-couscous](https://github.com/sroecker/supreme-couscous)** —
-the *Antares local POC* by Steffen Röcker (public, MIT). That repo is **linked,
-not vendored**. This repo depends on exactly two things from it:
+## Two repos, one clone
 
-1. `components/ai-code-review/tests/fixtures/antares/` — a **pinned 36 KB copy**
-   of one real recorded CPU run, used as test data. See its `PROVENANCE.md` for
-   the source commit and why it is frozen.
-2. The CLI's invocation contract, documented in the `antares-localize` task.
+The demo is split by responsibility:
 
-Nothing at build or run time needs that repo: Argo CD syncs `gitops/` only, the
-scanner image's context is `components/ai-code-review`, and the Antares CLI and
-weights are gated Cisco artifacts fetched onto a PVC at cluster-build time.
+| | |
+|---|---|
+| **This repo** | the **infra** part — cluster, GitOps, pipeline, signing, enforcement, governance |
+| **`antares/`** (submodule) | the **demo** part — [sroecker/supreme-couscous](https://github.com/sroecker/supreme-couscous), the *Antares local POC* by Steffen Röcker (public, MIT) |
 
-The fixtures are deliberately frozen rather than tracked as a submodule or
-subtree — a submodule on `main` would let an unrelated upstream commit break CI
-here. Absorb a format change on purpose:
+`antares/` is a **git submodule pinned to an exact commit** — currently
+`0b6b7a0` (upstream tag `v0.4.7`). A submodule stores a gitlink, not a branch,
+so upstream pushes cannot change what this repo builds against until the pin is
+deliberately moved.
+
+**Clone with it, or the tests fail:**
 
 ```sh
-./scripts/refresh-antares-fixture.sh     # then read what the tests say
+git clone --recurse-submodules <this repo>
+# already cloned:
+git submodule update --init --recursive
 ```
+
+`tests/test_localizer.py` reads the recorded runs in
+`antares/reports/cpu-sweep/`, so the parser is verified against real output in
+a format this project does not control. The conftest fails with the init
+command if the submodule is missing, rather than erroring obscurely.
+
+Nothing at *cluster* build or run time needs the submodule: Argo CD syncs
+`gitops/` only, the scanner image's context is `components/ai-code-review`, and
+the Antares CLI and weights are gated Cisco artifacts fetched onto a PVC.
+
+### Moving the pin
+
+```sh
+git submodule update --remote antares     # fast-forward to upstream main
+git -C antares checkout <sha-or-tag>       # or pin somewhere specific
+git add antares && git commit -m "Bump antares to <ref>"
+cd components/ai-code-review && pytest tests/test_localizer.py
+```
+
+The gitlink change shows in `git diff` as a one-line SHA bump. Run the tests
+afterwards: a failure means upstream's report format moved and
+`app/localizer.py` needs to follow. That is the pin doing its job — you choose
+when to absorb a format change instead of having it land unannounced.
 
 **The stage narrative is load-bearing.** Several things that look like bugs or
 omissions are deliberate and protected by tests. Read "Invariants" before
@@ -135,12 +158,6 @@ Order matters; see `docs/SETUP.md` for what each one waits on.
 ./scripts/06-build-scanner.sh      # in-cluster image build
 ./scripts/capture-replay.sh        # record real model output (do not skip)
 ./scripts/verify.sh                # pre-flight; run before going on stage
-```
-
-Refresh the pinned Antares fixtures (deliberate, not routine):
-
-```sh
-./scripts/refresh-antares-fixture.sh
 ```
 
 Stage flow: `demo-push-vulnerable.sh` → `demo-push-fix.sh` →
