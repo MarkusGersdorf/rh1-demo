@@ -98,6 +98,14 @@ Then open http://localhost:8080 and POST one of the diffs in
 
 ## Tests
 
+`test_localizer.py` reads real recorded Antares output from the pinned
+`antares/` submodule, so initialise it or those tests fail with an init
+reminder:
+
+```sh
+git submodule update --init --recursive   # from the repo root
+```
+
 ```sh
 pip install -r requirements-dev.txt
 pytest                                   # 165 tests

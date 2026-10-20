@@ -41,11 +41,20 @@ well as the weights. Accept both licences on the account you use.
 
 ```sh
 # Fork this repo first - Argo CD and RHDH both read from your fork, not mine.
-# --recurse-submodules brings in the pinned antares/ demo repo.
+# --recurse-submodules brings in the pinned antares/ demo repo (Stage A).
 git clone --recurse-submodules https://github.com/<you>/rh1-demo.git && cd rh1-demo
+
+# if you already cloned without it:
+git submodule update --init --recursive
+
 oc login ...
 ./scripts/00-prereqs.sh
 ```
+
+`antares/` is a submodule pinned to an exact commit, so it never drifts under
+you. `git submodule status antares` shows which one. Moving it is a deliberate
+commit — see **Moving the pin** in `AGENTS.md`. Only the test suite reads it;
+nothing on the cluster does.
 
 `00-prereqs.sh` fails loudly on the things that are expensive to discover late:
 missing operator catalog entries, no default StorageClass, a pull secret

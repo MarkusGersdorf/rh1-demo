@@ -32,8 +32,9 @@ deliberately moved.
 **Clone with it, or the tests fail:**
 
 ```sh
-git clone --recurse-submodules <this repo>
-# already cloned:
+git clone --recurse-submodules https://github.com/MarkusGersdorf/rh1-demo.git
+
+# already cloned without it:
 git submodule update --init --recursive
 ```
 
@@ -49,9 +50,9 @@ the Antares CLI and weights are gated Cisco artifacts fetched onto a PVC.
 ### Moving the pin
 
 ```sh
-git submodule update --remote antares     # fast-forward to upstream main
-git -C antares checkout <sha-or-tag>       # or pin somewhere specific
-git add antares && git commit -m "Bump antares to <ref>"
+git submodule update --remote antares        # fast-forward to upstream main
+git -C antares checkout v0.4.8               # or pin to a specific tag/SHA
+git add antares && git commit -m "Bump antares to v0.4.8"
 cd components/ai-code-review && pytest tests/test_localizer.py
 ```
 

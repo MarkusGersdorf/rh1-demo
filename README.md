@@ -122,9 +122,24 @@ against until the pin is moved on purpose.
 
 ```sh
 git clone --recurse-submodules https://github.com/MarkusGersdorf/rh1-demo.git
-# already cloned:
+
+# already cloned without it:
 git submodule update --init --recursive
 ```
+
+Moving the pin is a deliberate commit, not something that drifts:
+
+```sh
+git submodule update --remote antares        # fast-forward to upstream main
+git -C antares checkout v0.4.8               # or pin to a specific tag/SHA
+git add antares && git commit -m "Bump antares to v0.4.8"
+cd components/ai-code-review && pytest tests/test_localizer.py
+```
+
+The change lands in `git diff` as a one-line SHA bump. Run those tests after:
+a failure means upstream's report format moved and `app/localizer.py` has to
+follow — which is the pin earning its keep, since you find out when you chose
+to look rather than on the morning of the event.
 
 Neither the Antares model weights nor the Antares CLI are in either repository.
 Both are gated Cisco artifacts fetched at cluster-build time with a Hugging
