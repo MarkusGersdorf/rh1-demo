@@ -24,7 +24,9 @@ git clone --quiet --depth 1 --filter=blob:none --sparse "${UPSTREAM}" "${TMP}/re
 git -C "${TMP}/repo" sparse-checkout set "${UPSTREAM_PATH}" >/dev/null
 
 SHA="$(git -C "${TMP}/repo" rev-parse HEAD)"
-DATE="$(git -C "${TMP}/repo" log -1 --format=%cs)"
+# UTC, not local time. A commit at 22:22 UTC is "tomorrow" in Berlin, so a
+# local-time date makes two people refreshing flip this field back and forth.
+DATE="$(TZ=UTC0 git -C "${TMP}/repo" log -1 --format=%cd --date=format-local:%F)"
 SUBJECT="$(git -C "${TMP}/repo" log -1 --format=%s)"
 info "upstream ${SHA:0:12} (${DATE}) - ${SUBJECT}"
 
@@ -50,7 +52,7 @@ done
 step "Updating PROVENANCE.md"
 perl -pi -e "s{^\\| Upstream commit \\| \`[0-9a-f]+\` \\|\$}{| Upstream commit | \`${SHA}\` |}" "${FIXTURES}/PROVENANCE.md"
 perl -pi -e "s{^\\| Commit date \\| .* \\|\$}{| Commit date | ${DATE} |}" "${FIXTURES}/PROVENANCE.md"
-perl -pi -e "s{^\\| Copied \\| .* \\|\$}{| Copied | $(date +%F) |}" "${FIXTURES}/PROVENANCE.md"
+perl -pi -e "s{^\\| Copied \\| .* \\|\$}{| Copied | $(date -u +%F) |}" "${FIXTURES}/PROVENANCE.md"
 ok "provenance updated to ${SHA:0:12}"
 
 if (( CHANGED )); then
