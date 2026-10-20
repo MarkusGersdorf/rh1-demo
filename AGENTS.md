@@ -38,10 +38,20 @@ git clone --recurse-submodules https://github.com/MarkusGersdorf/rh1-demo.git
 git submodule update --init --recursive
 ```
 
-`tests/test_localizer.py` reads the recorded runs in
-`antares/reports/cpu-sweep/`, so the parser is verified against real output in
-a format this project does not control. The conftest fails with the init
-command if the submodule is missing, rather than erroring obscurely.
+The submodule is used two ways:
+
+1. `tests/test_localizer.py` reads the recorded runs in
+   `antares/reports/cpu-sweep/`, so the parser is verified against real output
+   in a format this project does not control. The conftest fails with the init
+   command if the submodule is missing, rather than erroring obscurely.
+2. **Act 1.5 of the walkthrough** runs its VS Code extension on an Apple
+   Silicon Mac — the inner loop, before the push. See `docs/SETUP.md` step 8
+   for the laptop build and `docs/DEMO-SCRIPT.md` for the talk track.
+
+Note `antares/` (the submodule) and the `antares-cli` Tekton workspace are
+unrelated: the workspace is a PVC holding the CLI extracted from the gated
+Hugging Face download at cluster-build time. The submodule is never mounted
+into the cluster.
 
 Nothing at *cluster* build or run time needs the submodule: Argo CD syncs
 `gitops/` only, the scanner image's context is `components/ai-code-review`, and

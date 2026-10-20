@@ -1,6 +1,7 @@
 # Demo script
 
-**Format:** manual walkthrough, ~22 minutes plus questions.
+**Format:** manual walkthrough, ~26 minutes plus questions — or ~22 if you
+drop Act 1.5, the laptop chapter, which is self-contained.
 **Shape:** a developer ships a one-line authorization bug. Everything that is
 supposed to catch it doesn't. Then one thing does, and its verdict becomes a
 signed fact that the cluster enforces.
@@ -29,6 +30,15 @@ prints every route — leave that in a scrollback you can reach.
 8. **RHOAI dashboard** → Model Serving → `foundation-sec-reasoning`
 
 **Two terminals, large font.** Left for pushes, right for `tkn` logs.
+
+**For Act 1.5, a second machine:** an Apple Silicon Mac with
+[sroecker/supreme-couscous](https://github.com/sroecker/supreme-couscous) set
+up — llama.cpp built, Antares 1B converted, the `antares-local-0.4.7` VSIX
+installed in **VSCodium**, and a model server already running
+(`./scripts/serve.sh`, port 8082). Confirm the sweep works on the demo repo
+*before* you walk on; a 60-second server readiness deadline is not something
+to discover live. Note upstream tested VSCodium 1.95.3 only — Microsoft VS
+Code is untested, so do not switch editors on the day.
 
 **Decide before you walk on:** live inference or replay?
 
@@ -107,6 +117,68 @@ return Response.ok(...).build();
 > part of this whole demo.
 
 Let that land. Most of the room has shipped this.
+
+---
+
+## Act 1.5 — Before it leaves the laptop (4 min)
+
+**This act runs on a Mac, not the cluster.** It is the inner loop, from
+[sroecker/supreme-couscous](https://github.com/sroecker/supreme-couscous) —
+the same Antares model, in the editor, before the code is ever pushed. Steffen
+owns this half; see the laptop checklist in `docs/SETUP.md`.
+
+> Before any of this reaches a pipeline — what does the developer have?
+>
+> Same model. Antares 1B, running on this laptop, Metal, no network. Let's scan
+> before committing.
+
+**In VSCodium**, right-click the `accounts` source folder → **Antares: Sweep
+Code**, and choose the **MCP/OAuth** profile.
+
+Say why you picked that profile, because it is the whole skill:
+
+> Three profiles. Web application covers injection and path traversal —
+> **CWE-89, 79, 78, 22.** None of those is our bug. MCP/OAuth covers
+> authentication and **CWE-862, missing authorization** — that is the
+> neighbourhood our bug lives in.
+>
+> So already the developer has to know roughly what class of mistake to look
+> for. Hold that thought; it is the argument for the pipeline running a
+> broader sweep than a human would choose under deadline.
+
+Let the sweep run. Then — and this is the part to get right — read whatever
+actually happened:
+
+**If it flags `AccountResource.java`:**
+
+> It names the file and the category. That's it. No line number, no
+> explanation, no fix — this is a one-billion-parameter localizer and that is
+> what localizers do. It has told our developer *where to look*, in seconds,
+> on a laptop, for free.
+>
+> Whether they then look is a different question.
+
+**If it flags nothing, or flags the wrong file:**
+
+> And it didn't catch it. I'm going to leave that on the screen, because it's
+> the honest result and it's the reason the next five minutes exist.
+>
+> It's a localizer, it's a billion parameters, it scanned three categories, and
+> this is a Java authorization bug with no injection sink. Upstream's own
+> evaluation records false positives and incomplete runs. A tool like this
+> belongs in the editor where it is cheap and advisory — not as the thing that
+> decides whether code ships.
+
+Either way, land the same point:
+
+> Which is the shape of the whole argument. Cheap and early in the editor.
+> Thorough and enforced in the pipeline. Signed where it matters.
+
+Then push.
+
+*(Upstream's own words, worth quoting if challenged: "These are bounded
+starting profiles, not complete security coverage. A category being scheduled
+does not mean the model successfully investigated it.")*
 
 ---
 
@@ -373,6 +445,8 @@ The `oc apply` is **rejected**. Read the admission error aloud.
 |---|---|
 | Webhook doesn't fire | `./scripts/run-pipeline.sh main`. Narrate it as "let's trigger it directly." Nobody minds. |
 | AI task times out | You're on `llamacpp` and it's slow. Let it run while you show the RHOAI tab and the model pod log. If it dies: switch `SCANNER_BACKEND` to `replay` (`oc set env deploy/ai-code-review -n lightwell-inward SCANNER_BACKEND=replay`) and re-run. |
+| Act 1.5: the laptop sweep finds nothing | Not a failure — the script has a talk track for exactly this, and it sets up why the pipeline stage exists. Say it and move on. |
+| Act 1.5: local server won't start | Startup has a 60s readiness deadline and abrupt editor exits can leave stale processes. Fall back to `./scripts/serve.sh` in a terminal, or skip to Act 2 — the chapter is self-contained. |
 | Stage A flags nothing, or flags the *fixed* file | Both are fine and neither is a failure. Antares is advisory: it cannot pass or fail anything. Say "the small model is a search step, not the reviewer" and carry on. Upstream's own numbers show it flagging corrected code, which is why it does not gate. |
 | Stage A is slow (minutes) | Recorded CPU runs took 167s for a single-file sweep. Lower `--max-cwes`, or narrate over it — the RHOAI tab and the Antares pod log are both worth showing. If it is really stuck, the task has a 25m timeout and the pipeline continues without it. |
 | Antares CLI missing on the PVC | The CLI ships inside the gated HF download; the `antares-fetch` job extracts it. The task detects this, prints why, and exits zero — the demo proceeds with Stage B only. |
@@ -440,6 +514,15 @@ is a real false-negative vector. Mitigations: the diff is reviewed, not the
 whole repo; SAST runs independently; and the attestation records what was
 reviewed so a suspicious scope is auditable. Honest answer: this is unsolved
 and worth saying so.
+
+**"If the editor already scans, why do I need the pipeline?"**
+Three reasons, and the demo shows all of them. The editor scan is advisory and
+a developer under deadline can skip it; the pipeline cannot be skipped because
+RHACS will not admit an unsigned image. The editor runs a bounded profile the
+developer chose, typically three categories; the pipeline runs a broader sweep
+plus a reasoning model plus SAST. And the editor produces no signed artifact —
+nothing downstream can verify that a scan happened at all. Shift left *and*
+enforce right; they are not alternatives.
 
 **"Does this work with GitHub / GitLab / Jenkins instead?"**
 Yes. Gitea is here so the demo is self-contained. The scanner is an HTTP

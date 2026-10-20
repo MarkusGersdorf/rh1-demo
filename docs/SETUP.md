@@ -23,7 +23,7 @@ Stage A: 2/5). If you are tight, scale the Stage B `InferenceService` to zero
 and demo it on the replay backend — the walkthrough is identical and you lose
 only the live-inference aside. Stage A is small enough to leave running.
 
-## Prerequisites on your laptop
+## Prerequisites
 
 `oc`, `git`, `jq`, `curl`, `cosign`, and optionally `tkn` (much nicer pipeline
 logs).
@@ -220,7 +220,57 @@ Checks every component, the scanner's readiness, the replay provenance, the
 RHACM policy's compliance, and whether the git repo is at the base commit. It
 also prints every route you will open on stage — keep that output.
 
-### 8. Rehearse
+### 8. The laptop, for Act 1.5
+
+The inner-loop act runs on an **Apple Silicon Mac**, not the cluster, from the
+pinned `antares/` submodule. Follow `antares/README.md` — it is the
+authoritative setup and it is thorough. In outline:
+
+```sh
+cd antares
+
+# weights + CLI (gated: accept the licence on your HF account first)
+hf download fdtn-ai/antares-1b   --revision 10417eb35641b32e7141157db19c76eb545193b6   --local-dir models/antares-1b
+mkdir -p vendor && unzip models/antares-1b/assets/antares-cli.zip -d vendor/antares-cli
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r requirements.lock.txt
+
+# llama.cpp with Metal
+git clone https://github.com/ggml-org/llama.cpp.git vendor/llama.cpp
+git -C vendor/llama.cpp checkout 451b89bae0c4b1dd612eb503ceace906c01ddcc9
+cmake -S vendor/llama.cpp -B build/llama.cpp -DCMAKE_BUILD_TYPE=Release   -DGGML_METAL=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF
+cmake --build build/llama.cpp --target llama-server -j 6
+
+# BF16 for Metal
+.venv/bin/python vendor/llama.cpp/convert_hf_to_gguf.py models/antares-1b   --outfile models/antares-1b-bf16.gguf --outtype bf16
+
+# the editor extension (Node 22)
+cd vscode-extension && npm ci && npm test && npm run package
+```
+
+Then in **VSCodium** — upstream tested 1.95.3 and *only* VSCodium, so do not
+substitute Microsoft VS Code on the day:
+
+1. **Extensions: Install from VSIX…** → `antares-local-0.4.7.vsix`
+2. **Antares: Configure Local CLI** → absolute path to `antares/.venv/bin/antares`
+   (the executable, **not** `scripts/antares.sh`)
+3. **Antares: Select Local Model** → 1B
+4. Start a server: `./scripts/serve.sh` (port 8082), or the extension's
+   **Setup and Server Status** panel
+
+Rehearse the sweep on the demo app before the event:
+
+- Right-click the source folder → **Antares: Sweep Code** → **MCP/OAuth**
+  profile (it covers CWE-862, missing authorization — the category the planted
+  bug lives in; the Web profile covers only injection and traversal)
+- **Record what it actually does.** The script has a talk track for both
+  outcomes, but you want to know which one you are walking into.
+
+Note the server has a 60-second readiness deadline, an extension-started server
+is owned by that editor, and an abrupt editor exit can leave a process needing
+manual cleanup. None of that is a good discovery to make live.
+
+### 9. Rehearse
 
 ```sh
 ./scripts/demo-push-vulnerable.sh   # must block
