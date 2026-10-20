@@ -1,0 +1,168 @@
+---
+# Antares 1B: the Stage A localizer, plus the Antares CLI itself.
+#
+# The CLI is distributed *inside* the gated Hugging Face model repository, as
+# assets/antares-cli.zip. That is unusual and it is the main integration
+# friction: getting the CLI requires an HF token for an account that has
+# accepted the model licence. Doing it here, in a job that already needs the
+# token and a PVC, keeps that credential out of the scanner's image build.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: antares-cli
+  namespace: lightwell-inward
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: antares-model
+  namespace: lightwell-inward
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    # 1B at F16 is ~2.5GB plus the source weights during conversion. A long
+    # way from the 80Gi the 8B model needed.
+    storage: 20Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: antares-fetch-script
+  namespace: lightwell-inward
+data:
+  fetch.sh: |
+    #!/usr/bin/env bash
+    # Populate the Antares model PVC with an F16 GGUF, and the CLI PVC with the
+    # CLI in its own virtualenv. Idempotent on both halves.
+    set -euo pipefail
+
+    MODEL_REPO="${MODEL_REPO:-fdtn-ai/antares-1b}"
+    MODEL_REVISION="${MODEL_REVISION:-}"
+    # CPU inference needs F16. The upstream README builds BF16 for Metal; on a
+    # CPU-only cluster that is the wrong precision, so convert to F16 here.
+    TARGET="/mnt/models/antares-1b-f16.gguf"
+    SNAPSHOT="/mnt/models/hf-snapshot"
+    CLI_ROOT="/mnt/cli"
+
+    have_model() { [[ -s "${TARGET}" ]]; }
+    have_cli()   { [[ -x "${CLI_ROOT}/venv/bin/antares" ]]; }
+
+    if have_model && have_cli; then
+      echo "[fetch] model and CLI already present - nothing to do."
+      exit 0
+    fi
+
+    command -v hf >/dev/null 2>&1 || pip install --quiet --no-cache-dir "huggingface_hub[cli]"
+
+    if [[ -z "${HF_TOKEN:-}" ]]; then
+      echo "[fetch] ERROR: HF_TOKEN is empty."
+      echo "[fetch] Antares is gated. Both the weights AND the CLI live behind the"
+      echo "[fetch] licence click-through, so there is no token-free path here."
+      echo "[fetch]   oc create secret generic huggingface-token -n lightwell-inward \\"
+      echo "[fetch]     --from-literal=token=hf_..."
+      exit 1
+    fi
+
+    if [[ ! -d "${SNAPSHOT}" ]]; then
+      echo "[fetch] downloading ${MODEL_REPO}"
+      if [[ -n "${MODEL_REVISION}" ]]; then
+        hf download "${MODEL_REPO}" --revision "${MODEL_REVISION}" --local-dir "${SNAPSHOT}"
+      else
+        hf download "${MODEL_REPO}" --local-dir "${SNAPSHOT}"
+      fi
+    fi
+
+    if ! have_cli; then
+      echo "[fetch] extracting the Antares CLI from the model download"
+      ZIP="$(find "${SNAPSHOT}" -name 'antares-cli*.zip' | head -1)"
+      [[ -n "${ZIP}" ]] || { echo "[fetch] ERROR: no antares-cli zip in the snapshot"; exit 1; }
+
+      mkdir -p "${CLI_ROOT}/pkg"
+      python3 -m zipfile -e "${ZIP}" "${CLI_ROOT}/pkg"
+      python3 -m venv "${CLI_ROOT}/venv"
+      "${CLI_ROOT}/venv/bin/pip" install --quiet --no-cache-dir "${CLI_ROOT}/pkg"/*.whl 2>/dev/null \
+        || "${CLI_ROOT}/venv/bin/pip" install --quiet --no-cache-dir "${CLI_ROOT}/pkg"
+      "${CLI_ROOT}/venv/bin/antares" --version || true
+      echo "[fetch] CLI installed at ${CLI_ROOT}/venv/bin/antares"
+    fi
+
+    if ! have_model; then
+      CONVERT="$(find / -maxdepth 4 -name 'convert_hf_to_gguf.py' -type f 2>/dev/null | head -1 || true)"
+      [[ -n "${CONVERT}" ]] || { echo "[fetch] ERROR: convert_hf_to_gguf.py not found - use the ':full' llama.cpp image"; exit 1; }
+      echo "[fetch] converting to F16 GGUF (required for CPU inference)"
+      python3 "${CONVERT}" "${SNAPSHOT}" --outfile "${TARGET}.part" --outtype f16
+      mv "${TARGET}.part" "${TARGET}"
+      sha256sum "${TARGET}" | tee /mnt/models/antares.sha256
+      # Copy onto the CLI PVC too, so the pipeline can pin the model in the
+      # attestation without mounting the model volume.
+      cut -d' ' -f1 /mnt/models/antares.sha256 > "${CLI_ROOT}/antares.sha256"
+    fi
+
+    # The snapshot is only needed for conversion and the CLI extraction.
+    rm -rf "${SNAPSHOT}"
+    echo "[fetch] done: $(du -h "${TARGET}" | cut -f1)"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: antares-fetch
+  namespace: lightwell-inward
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+    argocd.argoproj.io/sync-options: Replace=true
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app: antares-fetch
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: fetch
+          image: ghcr.io/ggml-org/llama.cpp:full
+          command: ["bash", "/scripts/fetch.sh"]
+          env:
+            - name: MODEL_REPO
+              value: fdtn-ai/antares-1b
+            # Pin to the revision the upstream POC validated against.
+            - name: MODEL_REVISION
+              value: 10417eb35641b32e7141157db19c76eb545193b6
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: huggingface-token
+                  key: token
+                  optional: true
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 12Gi
+          volumeMounts:
+            - name: antares-model
+              mountPath: /mnt/models
+            - name: antares-cli
+              mountPath: /mnt/cli
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: antares-model
+          persistentVolumeClaim:
+            claimName: antares-model
+        - name: antares-cli
+          persistentVolumeClaim:
+            claimName: antares-cli
+        - name: scripts
+          configMap:
+            name: antares-fetch-script
+            defaultMode: 0755

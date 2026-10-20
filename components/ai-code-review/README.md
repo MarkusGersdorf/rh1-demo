@@ -22,9 +22,18 @@ GET  /              operator view, auto-refreshing. For the projector.
   "diff": "diff --git a/... ",
   "files": [{"path": "src/.../AccountResource.java", "content": "..."}],
   "image": "image-registry.../accounts-api",
-  "image_digest": "sha256:..."
+  "image_digest": "sha256:...",
+  "localizer": {
+    "tool": "antares-cli", "model": "antares-1b",
+    "findings": [{"file": "app.py", "cwe": "CWE-89", "likelihood": "high"}],
+    "cwes_checked": ["CWE-89"], "cwes_available": 944,
+    "model_digest": "sha256:7c1e..."
+  }
 }
 ```
+
+`localizer` is optional. When absent the review proceeds on the diff alone —
+Stage A is advisory and its absence must never disable Stage B.
 
 Returns `verdict` (`pass` | `fail` | `error`), `findings[]`, and `predicate`
 (the in-toto statement for `cosign attest`).
@@ -43,6 +52,7 @@ Returns `verdict` (`pass` | `fail` | `error`), `findings[]`, and `predicate`
 | `MIN_CONFIDENCE` | `medium` | Confidence floor before a finding can block |
 | `REPLAY_FALLBACK` | unset | `live` sends replay misses to the model |
 | `REPLAY_MAX_DELAY_SECONDS` | `3` | Caps the simulated latency of a replay |
+| `ANTARES_MODEL_DIGEST` | read from sidecar | Pins Stage A in the attestation |
 
 ## Fail-closed behaviour
 
@@ -90,11 +100,15 @@ Then open http://localhost:8080 and POST one of the diffs in
 
 ```sh
 pip install -r requirements-dev.txt
-pytest                                   # 133 tests
+pytest                                   # 165 tests
 pytest --cov=app --cov-report=term-missing
 ```
 
 Coverage floor is 90% (`pyproject.toml`); it currently sits at 98%.
+
+Two stages feed this service. Stage A (Antares, a file-level localizer) is
+ingested by `app/localizer.py` and passed to Stage B as a *prior* — it never
+gates anything. See `docs/ARCHITECTURE.md` for why.
 
 | File | Covers |
 |---|---|
@@ -105,6 +119,7 @@ Coverage floor is 90% (`pyproject.toml`); it currently sits at 98%.
 | `test_attest.py` | The in-toto statement — subject binding, scope counting, and that the reviewer block is fully pinned |
 | `test_api.py` | The endpoints as Tekton drives them, plus the fail-closed guarantee |
 | `test_prompts.py` | That the prompt version is pinned and the prompt still scopes out dependencies |
+| `test_localizer.py` | Stage A ingestion, run against a pinned copy of real Antares output in `tests/fixtures/antares/` |
 | `test_demo_integrity.py` | **The demo's premise.** See below. |
 
 ### test_demo_integrity.py

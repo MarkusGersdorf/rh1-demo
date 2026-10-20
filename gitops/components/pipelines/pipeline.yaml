@@ -24,6 +24,8 @@ spec:
       default: image-registry.openshift-image-registry.svc:5000/demo-accounts/accounts-api
   workspaces:
     - name: source
+    - name: antares
+      description: Holds the Antares CLI, extracted by the antares-fetch job.
   results:
     - name: image-ref
       value: $(tasks.build-image.results.image-ref)
@@ -31,6 +33,8 @@ spec:
       value: $(tasks.ai-code-review.results.verdict)
     - name: rekor-log-index
       value: $(tasks.sign-and-attest.results.rekor-log-index)
+    - name: localizer-findings
+      value: $(tasks.antares-localize.results.findings-count)
   tasks:
     - name: fetch-source
       taskRef:
@@ -64,9 +68,23 @@ spec:
         - name: source
           workspace: source
 
-    # ---- the half nothing covers today -----------------------------------
+    # ---- Stage A: cheap file-level localization, every commit ------------
+    # Advisory by design. It narrows attention and is recorded as a second
+    # reviewer in the attestation, but it cannot pass or fail the build: it
+    # reports no line, no rationale and no remediation.
+    - name: antares-localize
+      runAfter: [fetch-source]
+      taskRef:
+        name: antares-localize
+      workspaces:
+        - name: source
+          workspace: source
+        - name: antares
+          workspace: antares
+
+    # ---- Stage B: the half nothing covers today --------------------------
     - name: ai-code-review
-      runAfter: [lightwell-verify, sast-semgrep]
+      runAfter: [lightwell-verify, sast-semgrep, antares-localize]
       taskRef:
         name: ai-code-review
       params:
@@ -143,6 +161,10 @@ spec:
           value: $(tasks.lightwell-verify.results.summary)
         - name: semgrep-findings
           value: $(tasks.sast-semgrep.results.findings-count)
+        - name: localizer-findings
+          value: $(tasks.antares-localize.results.findings-count)
+        - name: localizer-files
+          value: $(tasks.antares-localize.results.files-flagged)
 ---
 apiVersion: tekton.dev/v1
 kind: Task
@@ -169,6 +191,12 @@ spec:
     - name: semgrep-findings
       type: string
       default: "0"
+    - name: localizer-findings
+      type: string
+      default: "0"
+    - name: localizer-files
+      type: string
+      default: ""
   steps:
     - name: report
       image: registry.access.redhat.com/ubi9/ubi-minimal:latest
@@ -186,7 +214,11 @@ spec:
           SAST           (Semgrep)
             $(params.semgrep-findings) finding(s)
 
-          First-party    (Foundation-Sec-8B-Reasoning on RHOAI)
+          Stage A        (Antares 1B on RHOAI - localization only)
+            files flagged   : $(params.localizer-findings)
+            $(params.localizer-files)
+
+          Stage B        (Foundation-Sec-8B-Reasoning on RHOAI - reasoning)
             verdict         : $(params.ai-verdict)
             findings        : $(params.ai-findings)
             top severity    : $(params.top-severity)

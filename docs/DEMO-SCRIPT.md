@@ -57,7 +57,7 @@ Either is fine. Claiming the first is the second is not.
 > And the part you wrote is increasingly the part an AI assistant wrote for
 > you. So: what signs *that*?
 
-Hold that question. Do not answer it yet.
+Hold that question. You will answer it with two models and a signature.
 
 ---
 
@@ -154,14 +154,41 @@ the check is right; the data feed is a stand-in. Say so plainly.)*
 > cannot write a rule for "the result of this comparison should have changed
 > control flow."
 
-### `ai-code-review`
+### `antares-localize` — Stage A
+
+> Now two models, with two different jobs.
+>
+> First one is **Antares 1B** — Cisco Foundation AI, open weights, one billion
+> parameters. Its job is narrow and it's honest about it: given a tree of code,
+> which *files* probably contain which *class* of weakness. That's it. No line
+> numbers, no explanation, no fix. Cisco's own model card calls it
+> "file-level vulnerability localization."
+>
+> Why bother? Because it's cheap enough to run on every commit, and it tells
+> the expensive model where to look.
+
+Point at the output. It flags files with a CWE and a likelihood.
+
+> And notice what the task says at the end: **it cannot fail the build.** It
+> examined a handful of the nine hundred and forty-four CWE classes in the
+> catalogue, so its silence tells you almost nothing. A gate built on that
+> would block clean releases.
+
+*(If Stage A does not flag the Java file, say so plainly and move on — see the
+note below. It changes nothing about what happens next.)*
+
+### `ai-code-review` — Stage B
 
 **Switch to Tab 4, the scanner UI.** It fills in as the task runs.
 
-> Now the diff goes to a model. Specifically: Cisco's
-> `Foundation-Sec-8B-Reasoning` — open weights, eight billion parameters,
-> purpose-built for security, the first open-weight security reasoning model.
-> Not a general code assistant with a security prompt bolted on.
+> Now the second model, and a different job entirely: the diff goes to
+> `Foundation-Sec-8B-Reasoning`. Open weights, eight billion parameters, a
+> security reasoning model. Where Antares says *which file*, this one says
+> *which line, why, how you'd exploit it, and what to change.*
+>
+> It gets Stage A's output as a hint — "look here first" — and it reviews the
+> whole diff anyway. Deliberately. If I gated this on the small model finding
+> something, then one model's miss silently switches off the other.
 >
 > It's running on Red Hat OpenShift AI. **Our cluster, our GPU-less hardware,
 > our data.** No diff leaves this cluster. For anyone whose lawyers have
@@ -346,6 +373,9 @@ The `oc apply` is **rejected**. Read the admission error aloud.
 |---|---|
 | Webhook doesn't fire | `./scripts/run-pipeline.sh main`. Narrate it as "let's trigger it directly." Nobody minds. |
 | AI task times out | You're on `llamacpp` and it's slow. Let it run while you show the RHOAI tab and the model pod log. If it dies: switch `SCANNER_BACKEND` to `replay` (`oc set env deploy/ai-code-review -n lightwell-inward SCANNER_BACKEND=replay`) and re-run. |
+| Stage A flags nothing, or flags the *fixed* file | Both are fine and neither is a failure. Antares is advisory: it cannot pass or fail anything. Say "the small model is a search step, not the reviewer" and carry on. Upstream's own numbers show it flagging corrected code, which is why it does not gate. |
+| Stage A is slow (minutes) | Recorded CPU runs took 167s for a single-file sweep. Lower `--max-cwes`, or narrate over it — the RHOAI tab and the Antares pod log are both worth showing. If it is really stuck, the task has a 25m timeout and the pipeline continues without it. |
+| Antares CLI missing on the PVC | The CLI ships inside the gated HF download; the `antares-fetch` job extracts it. The task detects this, prints why, and exits zero — the demo proceeds with Stage B only. |
 | Replay miss (verdict `error`) | The diff changed. `./scripts/demo-reset.sh` and re-push — the `contains_all` matcher should catch it. Don't debug fingerprints on stage. |
 | Rogue deploy is **admitted** | Enforcement is off. The script prints the four things to check. If you can't fix it in 30 seconds, show the policy and the violation list in RHACS instead and say enforcement is toggled off for the room's safety — then move on. |
 | Pipeline stuck on a PVC | Workspace PVC didn't bind. `oc get pvc -n lightwell-inward`. Usually storage pressure from a previous run — `demo-reset.sh` clears old PipelineRuns and their PVCs. |
@@ -379,13 +409,28 @@ hedged finding can't block). Lower either and findings are still attested, they
 just don't stop the build. That's deliberate — a gate people switch off is
 worse than a gate with a confidence floor.
 
-**"Why Cisco's model and not a frontier model?"**
-Open weights, so it runs in your cluster and your source never leaves. Purpose
--trained on security data rather than prompted into the role. Eight billion
-parameters, so it runs on hardware you already own. And competitive with
-70B-class models on CTIBench. If you'd rather use a frontier model, the backend
-abstraction in the scanner takes one more class — but then your source code
-leaves the building, and that's a different conversation with your lawyers.
+**"Why these models and not a frontier model?"**
+Open weights, so they run in your cluster and your source never leaves. That is
+the whole argument, and it is enough. A frontier model would find more real
+bugs than either of these — say so if asked, because it is true. What you give
+up is that your source leaves the building, and that you cannot pin a model
+digest: a hosted endpoint moves under you, so `modelDigest` becomes
+unpinnable and the revocability property weakens. Self-hosted open weights
+make that claim real. If you want a frontier model anyway, the scanner's
+backend interface takes one more class.
+
+**"Isn't a 1B model too small to be useful?"**
+For explaining a bug, yes — which is exactly why it is not the reviewer here.
+It is a localizer, and localization is a much easier problem than explanation.
+It cannot block the build, and the reasoning model behind it reviews the whole
+diff regardless. Use it for what it is good at and the size stops mattering.
+
+**"Two models from the same vendor — isn't the agreement meaningless?"**
+Largely, yes, and the demo says so. When both stages implicate a file the
+finding is marked corroborated and that is *all* that happens; it does not
+change the verdict. Same vendor, overlapping training data, so they are not
+independent observers. The honest value of Stage A is cost and attention, not
+a second opinion.
 
 **"Could the model be prompt-injected by the code it reviews?"**
 Yes, and it's the sharpest question here. The model only emits

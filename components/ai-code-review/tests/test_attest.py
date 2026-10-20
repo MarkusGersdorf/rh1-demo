@@ -6,6 +6,7 @@ gitops/components/pipelines/tasks.yaml, which is the thing that enforces it.
 """
 
 from app.attest import PREDICATE_TYPE, build_statement, diff_scope, model_digest
+from app.prompts import PROMPT_VERSION
 from app.schema import Finding, ReviewResponse
 
 
@@ -13,7 +14,7 @@ def response(**kw):
     defaults = dict(
         verdict="pass", findings=[], backend="replay",
         model="fdtn-ai/Foundation-Sec-8B-Reasoning",
-        prompt_version="lightwell-inward/prompts@v3",
+        prompt_version=PROMPT_VERSION,
         latency_ms=100, replayed=False,
     )
     defaults.update(kw)
@@ -109,29 +110,76 @@ def test_verdict_and_commits_are_recorded(make_request):
     assert pred["baseCommit"] == req.base_commit
 
 
-def test_reviewer_is_fully_pinned(make_request, monkeypatch):
+def test_explain_reviewer_is_fully_pinned(make_request, monkeypatch):
     """Model, digest, prompt version and decoding must all be in the claim.
 
     Without these the attestation is not revocable, which removes the main
     reason to sign it.
     """
     monkeypatch.setenv("MODEL_DIGEST", "sha256:abc123")
-    reviewer = build_statement(make_request("+x\n"), response())["predicate"]["reviewer"]
-    assert reviewer["model"] == "fdtn-ai/Foundation-Sec-8B-Reasoning"
-    assert reviewer["modelDigest"] == "sha256:abc123"
-    assert reviewer["promptVersion"] == "lightwell-inward/prompts@v3"
-    assert reviewer["decoding"]["temperature"] == 0.0
-    assert reviewer["decoding"]["schemaConstrained"] is True
-    assert reviewer["kind"] == "llm"
+    reviewers = build_statement(make_request("+x\n"), response())["predicate"]["reviewers"]
+    explain = [r for r in reviewers if r["stage"] == "explain"][0]
+    assert explain["model"] == "fdtn-ai/Foundation-Sec-8B-Reasoning"
+    assert explain["modelDigest"] == "sha256:abc123"
+    assert explain["promptVersion"] == PROMPT_VERSION
+    assert explain["decoding"]["temperature"] == 0.0
+    assert explain["decoding"]["schemaConstrained"] is True
+    assert explain["providesExplanation"] is True
+    assert explain["kind"] == "llm"
+
+
+def test_stage_a_omitted_when_it_did_not_run(make_request):
+    """A reviewer that did not run must not read as one that found nothing."""
+    reviewers = build_statement(make_request("+x\n"), response())["predicate"]["reviewers"]
+    assert [r["stage"] for r in reviewers] == ["explain"]
+
+
+def test_both_reviewers_recorded_with_separate_digests(make_request, localizer_result):
+    """Revocation must be able to target one stage without the other."""
+    req = make_request("+x\n", localizer=localizer_result)
+    reviewers = build_statement(req, response())["predicate"]["reviewers"]
+    assert [r["stage"] for r in reviewers] == ["localize", "explain"]
+    assert reviewers[0]["modelDigest"] != reviewers[1]["modelDigest"]
+    assert reviewers[0]["model"] == "antares-1b"
+
+
+def test_localizer_is_marked_as_not_explaining(make_request, localizer_result):
+    """The predicate must say Antares explains nothing.
+
+    Enterprise Contract denies a build whose only reviewer cannot explain, so
+    this flag is load-bearing, not documentation.
+    """
+    req = make_request("+x\n", localizer=localizer_result)
+    localize = build_statement(req, response())["predicate"]["reviewers"][0]
+    assert localize["providesExplanation"] is False
+    assert localize["capability"] == "file-level vulnerability localization"
+
+
+def test_localizer_coverage_is_recorded(make_request, localizer_result):
+    """"Clean" after 3 of 944 CWE classes is a much smaller claim than it looks."""
+    req = make_request("+x\n", localizer=localizer_result)
+    localize = build_statement(req, response())["predicate"]["reviewers"][0]
+    assert localize["cwesChecked"] == 3
+    assert localize["cwesAvailable"] == 944
+    assert localize["coverageTruncated"] is True
+
+
+def test_localizer_nondeterminism_is_not_hidden(make_request, localizer_result):
+    """Antares runs at temperature 0.3; the claim must not imply otherwise."""
+    req = make_request("+x\n", localizer=localizer_result)
+    localize = build_statement(req, response())["predicate"]["reviewers"][0]
+    assert localize["decoding"]["temperature"] == 0.3
+    assert localize["decoding"]["deterministic"] is False
 
 
 def test_replayed_flag_reaches_the_signed_claim(make_request):
     """A recorded answer must never pass as live inference, even in the signature."""
-    pred = build_statement(make_request("+x\n"), response(replayed=True))["predicate"]
-    assert pred["reviewer"]["replayed"] is True
+    def explain(replayed):
+        pred = build_statement(make_request("+x\n"), response(replayed=replayed))["predicate"]
+        return [r for r in pred["reviewers"] if r["stage"] == "explain"][0]
 
-    pred = build_statement(make_request("+x\n"), response(replayed=False))["predicate"]
-    assert pred["reviewer"]["replayed"] is False
+    assert explain(True)["replayed"] is True
+    assert explain(False)["replayed"] is False
 
 
 def test_findings_are_embedded(make_request):
@@ -188,4 +236,35 @@ def test_predicate_keys_match_the_enterprise_contract_rego(make_request):
     pred = build_statement(make_request("+x\n"), response())["predicate"]
     assert "verdict" in pred
     assert "filesReviewed" in pred["scope"]
-    assert "modelDigest" in pred["reviewer"]
+    for reviewer in pred["reviewers"]:
+        assert "modelDigest" in reviewer
+        assert "stage" in reviewer
+        assert "providesExplanation" in reviewer
+
+
+def test_localizer_digest_prefers_the_request_value(make_request, localizer_result):
+    """The pipeline reads the digest off the CLI volume and sends it, which is
+    more reliable than the scanner guessing at a mounted path."""
+    req = make_request("+x\n", localizer=localizer_result)
+    localize = build_statement(req, response())["predicate"]["reviewers"][0]
+    assert localize["modelDigest"] == localizer_result.model_digest
+
+
+def test_localizer_digest_env_fallback(make_request, localizer_result, monkeypatch):
+    monkeypatch.setenv("ANTARES_MODEL_DIGEST", "sha256:fromenv")
+    localizer_result.model_digest = None
+    req = make_request("+x\n", localizer=localizer_result)
+    localize = build_statement(req, response())["predicate"]["reviewers"][0]
+    assert localize["modelDigest"] == "sha256:fromenv"
+
+
+def test_localizer_unpinned_is_reported_honestly(make_request, localizer_result,
+                                                 monkeypatch, tmp_path):
+    """Enterprise Contract denies on "unpinned" for any reviewer, so it must
+    not be faked for Stage A either."""
+    monkeypatch.delenv("ANTARES_MODEL_DIGEST", raising=False)
+    monkeypatch.chdir(tmp_path)
+    localizer_result.model_digest = None
+    req = make_request("+x\n", localizer=localizer_result)
+    localize = build_statement(req, response())["predicate"]["reviewers"][0]
+    assert localize["modelDigest"] == "unpinned"

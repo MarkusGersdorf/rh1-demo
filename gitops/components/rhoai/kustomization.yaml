@@ -8,4 +8,7 @@ resources:
   - model-fetch-job.yaml
   - servingruntime-llamacpp-cpu.yaml
   - inferenceservice.yaml
+  # Stage A: the Antares localizer and its CLI.
+  - antares-fetch-job.yaml
+  - antares-inferenceservice.yaml
   # - servingruntime-vllm-gpu.yaml   # uncomment when a GPU node exists

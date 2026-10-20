@@ -1,0 +1,93 @@
+---
+# Stage A serving. Same llama.cpp runtime pattern as Stage B, but a 1B model at
+# F16, so the resource footprint is a fraction of the 8B's.
+#
+# Antares' CLI talks to /v1/completions, not /v1/chat/completions - its model
+# spec sets use_completions_api: true. llama-server serves both, so no special
+# configuration is needed, but do not "fix" the CLI's endpoint to the chat API.
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: antares-cpu-runtime
+  namespace: lightwell-inward
+  annotations:
+    openshift.io/display-name: "llama.cpp - Antares (CPU, F16 GGUF)"
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  supportedModelFormats:
+    - name: gguf-antares
+      autoSelect: false
+      priority: 1
+  protocolVersions:
+    - v2
+  multiModel: false
+  containers:
+    - name: kserve-container
+      image: ghcr.io/ggml-org/llama.cpp:server
+      args:
+        - --model
+        - /mnt/models/antares-1b-f16.gguf
+        - --alias
+        - antares-1b
+        - --host
+        - 0.0.0.0
+        - --port
+        - "8080"
+        # Matches the upstream POC's launcher.
+        - --ctx-size
+        - "16384"
+        - --parallel
+        - "1"
+        - --gpu-layers
+        - "0"
+        - --flash-attn
+        - "off"
+        - --threads
+        - "4"
+      ports:
+        - containerPort: 8080
+          protocol: TCP
+      resources:
+        requests:
+          cpu: "2"
+          memory: 5Gi
+        limits:
+          cpu: "4"
+          memory: 8Gi
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8080
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        failureThreshold: 30
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 8080
+        initialDelaySeconds: 120
+        periodSeconds: 30
+        failureThreshold: 10
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: antares
+  namespace: lightwell-inward
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+    serving.kserve.io/autoscalerClass: external
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  labels:
+    opendatahub.io/dashboard: "true"
+    lightwell-inward.redhat.com/role: localizer
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    model:
+      modelFormat:
+        name: gguf-antares
+      runtime: antares-cpu-runtime
+      storageUri: pvc://antares-model/

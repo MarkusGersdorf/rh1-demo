@@ -73,13 +73,35 @@ else
 fi
 
 step "Model serving"
-if oc get inferenceservice foundation-sec-reasoning -n lightwell-inward >/dev/null 2>&1; then
-  R="$(oc get inferenceservice foundation-sec-reasoning -n lightwell-inward \
-    -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)"
-  [[ "${R}" == "True" ]] && ok "InferenceService Ready" || \
-    warn "InferenceService not Ready (fine if you are demoing on replay)"
+for item in "foundation-sec-reasoning:Stage B (reasoning)" \
+            "antares:Stage A (localizer)"; do
+  IFS=: read -r isvc label <<< "${item}"
+  if oc get inferenceservice "${isvc}" -n lightwell-inward >/dev/null 2>&1; then
+    R="$(oc get inferenceservice "${isvc}" -n lightwell-inward \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)"
+    if [[ "${R}" == "True" ]]; then
+      ok "${label}: ${isvc} Ready"
+    else
+      warn "${label}: ${isvc} not Ready (Stage B is fine on replay; Stage A is advisory)"
+    fi
+  else
+    warn "${label}: no InferenceService ${isvc}"
+  fi
+done
+
+step "Antares CLI"
+if oc get pvc antares-cli -n lightwell-inward >/dev/null 2>&1; then
+  # The CLI arrives inside the gated HF download, so its absence is the most
+  # likely Stage A failure and it is silent - the task just skips.
+  if oc get job antares-fetch -n lightwell-inward \
+      -o jsonpath='{.status.succeeded}' 2>/dev/null | grep -q 1; then
+    ok "antares-fetch completed - CLI should be on the PVC"
+  else
+    warn "antares-fetch has not succeeded. Stage A will skip (advisory, so the"
+    warn "demo still runs). Check: oc logs job/antares-fetch -n lightwell-inward"
+  fi
 else
-  warn "no InferenceService"
+  warn "no antares-cli PVC - is the rhoai Application synced?"
 fi
 
 step "Git repo"

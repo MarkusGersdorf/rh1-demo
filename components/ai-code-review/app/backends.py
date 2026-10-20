@@ -135,7 +135,8 @@ class OpenAICompatBackend(Backend):
 
     def review(self, req):
         messages = build_messages(
-            req.repository, req.commit, req.base_commit, req.diff, req.files
+            req.repository, req.commit, req.base_commit, req.diff, req.files,
+            localizer=getattr(req, "localizer", None),
         )
         headers = {"Content-Type": "application/json"}
         if self.api_key:

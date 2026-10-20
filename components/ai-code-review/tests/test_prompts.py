@@ -10,7 +10,7 @@ def test_version_is_pinned():
     If you change the prompt, bump this - otherwise two different reviews
     claim to have been produced the same way, and the attestation lies.
     """
-    assert PROMPT_VERSION == "lightwell-inward/prompts@v3"
+    assert PROMPT_VERSION == "lightwell-inward/prompts@v4"
 
 
 def test_messages_are_system_then_user():
@@ -63,3 +63,33 @@ def test_multiple_files_each_get_a_section():
              FileContext(path="B.java", content="bbb")]
     user = build_messages("r", "c", "b", "+x\n", files)[1]["content"]
     assert user.count("## Full content of") == 2
+
+
+def test_no_localizer_section_when_stage_a_absent():
+    user = build_messages("r", "c", "b", "+x\n", [], localizer=None)[1]["content"]
+    assert "Prior signal" not in user
+
+
+def test_no_localizer_section_when_stage_a_found_nothing(localizer_result):
+    """An empty prior is noise. Say nothing rather than 'it found no files'."""
+    localizer_result.findings = []
+    user = build_messages("r", "c", "b", "+x\n", [],
+                          localizer=localizer_result)[1]["content"]
+    assert "Prior signal" not in user
+
+
+def test_localizer_section_states_its_limits(localizer_result):
+    """The wording is load-bearing. An unqualified list of another model's
+    findings invites rubber-stamping, which would correlate the two stages and
+    make corroboration meaningless."""
+    user = build_messages("r", "c", "b", "+x\n", [],
+                          localizer=localizer_result)[1]["content"]
+    # Collapse whitespace: the template hard-wraps, so substrings must not be
+    # sensitive to where a line happens to break.
+    flat = " ".join(user.split())
+    assert "does NOT report line numbers, reasoning or remediation" in flat
+    assert "not as a conclusion" in flat
+    assert "is not thereby clean" in flat
+    assert "944 CWE classes" in flat, "coverage must be stated so silence is discounted"
+    assert "app.py" in flat
+    assert "CWE-78" in flat

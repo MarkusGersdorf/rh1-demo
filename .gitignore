@@ -9,3 +9,9 @@ target/
 .venv/
 __pycache__/
 *.pyc
+
+# Coverage artifacts
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/

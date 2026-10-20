@@ -35,6 +35,9 @@ spec:
           resources:
             requests:
               storage: 5Gi
+    - name: antares
+      persistentVolumeClaim:
+        claimName: antares-cli
 YAML
 )"
 ok "started ${NAME}"

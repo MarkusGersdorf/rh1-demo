@@ -201,6 +201,133 @@ spec:
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
+  name: antares-localize
+  namespace: lightwell-inward
+spec:
+  description: >
+    Stage A. Cisco's Antares CLI, served by RHOAI, localizing likely
+    vulnerability classes to files.
+
+    Antares is a file-level localizer - it reports which file probably holds
+    which CWE, with no line number, no rationale and no remediation. That is
+    its documented purpose, not a limitation of this integration. It is cheap
+    enough to run on every commit, which is why it runs first and why the
+    reasoning model that follows only has to explain, not search.
+
+    This task never fails the pipeline. A localizer's silence is weak evidence
+    - it examines a ranked subset of roughly 944 CWE classes - so it informs
+    Stage B rather than gating it.
+  params:
+    - name: endpoint
+      type: string
+      default: http://antares-predictor.lightwell-inward.svc.cluster.local:8080/v1/completions
+    - name: model
+      type: string
+      default: antares-1b
+    - name: max-cwes
+      type: string
+      default: "5"
+  workspaces:
+    - name: source
+    - name: antares
+      description: PVC holding the Antares CLI extracted by the antares-fetch job.
+  results:
+    - name: findings-count
+    - name: files-flagged
+  steps:
+    - name: sweep
+      image: registry.access.redhat.com/ubi9/python-312:latest
+      workingDir: $(workspaces.source.path)/repo
+      timeout: 25m
+      env:
+        - name: ANTARES_ENDPOINT
+          value: $(params.endpoint)
+        - name: ANTARES_MODEL
+          value: $(params.model)
+        - name: ANTARES_DATA_DIR
+          value: /tmp/antares-data
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+        OUT="$(workspaces.source.path)/antares-report"
+        rm -rf "${OUT}"
+        mkdir -p /tmp/antares-data
+
+        CLI="$(workspaces.antares.path)/venv/bin/antares"
+        if [[ ! -x "${CLI}" ]]; then
+          echo "Antares CLI not found at ${CLI}."
+          echo "The CLI ships inside the gated Hugging Face model download, so the"
+          echo "antares-fetch job extracts it onto this PVC. Check that job."
+          echo "Stage A is advisory - continuing without it."
+          exit 0
+        fi
+
+        echo "== Antares sweep (file-level localization)"
+        "${CLI}" sweep . --max-cwes "$(params.max-cwes)" --workers 1 \
+          --no-tui --output "${OUT}" \
+          || echo "antares exited non-zero - continuing, Stage A is advisory"
+        exit 0
+    - name: summarize
+      image: registry.access.redhat.com/ubi9/python-312:latest
+      script: |
+        #!/usr/bin/env python3
+        """Print Stage A's result and publish its shape as task results."""
+        import json
+        import pathlib
+
+        report = pathlib.Path("$(workspaces.source.path)/antares-report/report.json")
+        count = pathlib.Path("$(results.findings-count.path)")
+        flagged = pathlib.Path("$(results.files-flagged.path)")
+
+        if not report.is_file():
+            print("no Antares report - Stage A did not run")
+            count.write_text("0")
+            flagged.write_text("")
+            raise SystemExit(0)
+
+        data = json.loads(report.read_text())
+        findings = data.get("findings") or []
+        summary = data.get("summary") or {}
+        meta = data.get("metadata") or {}
+
+        print(f"model    : {meta.get('model')}")
+        print(f"mode     : {meta.get('mode')}")
+        print(f"duration : {summary.get('duration_seconds', 0):.1f}s "
+              f"({summary.get('tool_call_count', 0)} tool calls, "
+              f"{summary.get('failed_tool_calls', 0)} failed)")
+        print(f"checked  : {len(meta.get('cwe_ids') or [])} CWE classes")
+        print()
+
+        for f in findings:
+            cwes = ",".join(f.get("cwe_ids") or [])
+            print(f"  {f.get('file_path')}  {cwes}  "
+                  f"likelihood={f.get('likelihood_of_exploit')}  {f.get('title')}")
+
+        if not findings:
+            print("  no files flagged")
+            print()
+            print("Silence here is weak evidence: Antares examined a ranked subset")
+            print("of the CWE catalogue. Stage B still reviews the whole diff.")
+
+        files = sorted({f.get("file_path", "") for f in findings if f.get("file_path")})
+        count.write_text(str(len(findings)))
+        flagged.write_text(",".join(files))
+
+        # Carry the served model's digest alongside the report so the
+        # attestation can pin Stage A. Without it the predicate records
+        # "unpinned" and Enterprise Contract rejects the build.
+        src = pathlib.Path("$(workspaces.antares.path)/antares.sha256")
+        if src.is_file():
+            dest = report.parent / "model.sha256"
+            dest.write_text(src.read_text().strip())
+            print(f"\nStage A model digest: {src.read_text().strip()[:16]}...")
+        else:
+            print("\nWARNING: no antares.sha256 on the CLI volume - Stage A will")
+            print("be recorded as unpinned and Enterprise Contract will deny it.")
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
   name: ai-code-review
   namespace: lightwell-inward
 spec:
@@ -247,6 +374,57 @@ spec:
             return subprocess.run(["git", *args], capture_output=True,
                                   text=True, check=True).stdout
 
+        def _antares_digest():
+            path = pathlib.Path(
+                "$(workspaces.source.path)/antares-report/model.sha256")
+            try:
+                return "sha256:" + path.read_text().strip().split()[0]
+            except (OSError, IndexError):
+                return None
+
+        def _localizer_payload(data):
+            """Shape the Antares report for the scanner's /review API."""
+            meta = data.get("metadata") or {}
+            summary = data.get("summary") or {}
+            selection = meta.get("selection") or {}
+            backend = ((meta.get("model_configuration") or {}).get("backend")) or {}
+            repro = meta.get("reproducibility") or {}
+            temperature = backend.get("temperature")
+            return {
+                "tool": "antares-cli",
+                "model": meta.get("model", "unknown"),
+                "mode": meta.get("mode", "unknown"),
+                "findings": [
+                    {
+                        "title": f.get("title", ""),
+                        "file": f.get("file_path", ""),
+                        "cwe": (f.get("cwe_ids") or [""])[0],
+                        "cwes": f.get("cwe_ids") or [],
+                        "likelihood": str(f.get("likelihood_of_exploit", "unknown")).lower(),
+                        "rank": int(f.get("submission_rank", 0) or 0),
+                    }
+                    for f in data.get("findings") or []
+                ],
+                "cwes_checked": meta.get("cwe_ids") or selection.get("selected_cwe_ids") or [],
+                "cwes_available": int(selection.get("candidate_cwe_count", 0) or 0),
+                "truncated": bool(selection.get("truncated", False)),
+                "duration_seconds": float(summary.get("duration_seconds", 0.0) or 0.0),
+                "tool_calls": int(summary.get("tool_call_count", 0) or 0),
+                "failed_tool_calls": int(summary.get("failed_tool_calls", 0) or 0),
+                "incomplete_reason": summary.get("incomplete_reason"),
+                "request_hash": repro.get("request_hash"),
+                "model_digest": _antares_digest(),
+                "decoding": {
+                    "temperature": temperature,
+                    "topP": backend.get("top_p"),
+                    "maxTokens": backend.get("max_tokens"),
+                    "contextWindow": backend.get("context_window"),
+                    "deterministic": temperature == 0
+                        and not repro.get("remote_provider_may_vary", False),
+                    "providerMayVary": bool(repro.get("remote_provider_may_vary", False)),
+                },
+            }
+
         diff = git("diff", f"{BASE}..{COMMIT}", "--", ".")
         if not diff.strip():
             print("empty diff - nothing to review")
@@ -269,6 +447,20 @@ spec:
             if len(content) < 60_000:
                 files.append({"path": path, "content": content})
 
+        # Stage A's report, if it ran. Sent as a prior, not a filter: the
+        # reasoner reviews the whole diff either way.
+        localizer = None
+        report = pathlib.Path("$(workspaces.source.path)/antares-report/report.json")
+        if report.is_file():
+            try:
+                localizer = _localizer_payload(json.loads(report.read_text()))
+                print(f"Stage A: {len(localizer['findings'])} file(s) flagged by "
+                      f"{localizer['model']}")
+            except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                print(f"Stage A report unreadable ({exc}) - proceeding without it")
+        else:
+            print("Stage A: no Antares report - proceeding on the diff alone")
+
         payload = {
             "repository": REPO, "commit": COMMIT, "base_commit": BASE,
             "diff": diff, "files": files,
@@ -278,6 +470,8 @@ spec:
                 "note": "Ran in the same pipeline. Covers a different bug class.",
             }],
         }
+        if localizer is not None:
+            payload["localizer"] = localizer
 
         print(f"reviewing {BASE[:12]}..{COMMIT[:12]}")
         print(f"  {len(diff.splitlines())} diff lines, {len(files)} full files\n")
@@ -312,7 +506,8 @@ spec:
 
         for f in findings:
             print("-" * 78)
-            print(f"  {f['severity'].upper()}  [{f['confidence']} confidence]  {f['title']}")
+            corr = "  [corroborated by Stage A]" if f.get("corroborated_by_localizer") else ""
+            print(f"  {f['severity'].upper()}  [{f['confidence']} confidence]  {f['title']}{corr}")
             print(f"  {f['cwe']}  {f['owasp']}")
             if f.get("cvss_vector"):
                 print(f"  CVSS {f.get('cvss_score', '?')}  {f['cvss_vector']}")
@@ -623,14 +818,31 @@ spec:
             }
         }
 
-        # The model must be pinned. An unpinned claim cannot be revoked later,
-        # which removes the main reason to attest it at all.
+        # Every reviewer must be pinned. An unpinned claim cannot be revoked
+        # later, which removes the main reason to attest it at all. The
+        # predicate carries a list because two models with different jobs
+        # produce the verdict, and either one may need revoking alone.
         deny contains result if {
             some att in code_review_attestations
-            att.predicate.reviewer.modelDigest == "unpinned"
+            some reviewer in att.predicate.reviewers
+            reviewer.modelDigest == "unpinned"
             result := {
                 "code": "lightwell_inward.model_unpinned",
-                "msg": "reviewer.modelDigest is unpinned - claim is not revocable",
+                "msg": sprintf("reviewer %q has an unpinned modelDigest - claim is not revocable", [reviewer.stage]),
+            }
+        }
+
+        # A verdict must come from something that can actually explain a
+        # finding. Antares localizes files and reports no line, rationale or
+        # remediation; if it were the only reviewer, "pass" would mean nothing
+        # more than "a localizer checked a few CWE classes and stayed quiet".
+        deny contains result if {
+            some att in code_review_attestations
+            explainers := [r | some r in att.predicate.reviewers; r.providesExplanation == true]
+            count(explainers) == 0
+            result := {
+                "code": "lightwell_inward.no_explaining_reviewer",
+                "msg": "no reviewer provides explanations - a localizer alone cannot clear a change",
             }
         }
 

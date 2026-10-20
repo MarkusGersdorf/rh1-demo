@@ -86,24 +86,10 @@ def build_statement(req, response) -> dict:
             "repository": req.repository,
             "commit": req.commit,
             "baseCommit": req.base_commit,
-            "reviewer": {
-                "kind": "llm",
-                "model": response.model,
-                "modelDigest": model_digest(),
-                "servedBy": os.getenv("MODEL_SERVED_BY", "openshift-ai/kserve"),
-                "backend": response.backend,
-                # Recorded, not live. Stated in the signed claim itself so a
-                # replayed answer can never silently pass as fresh inference.
-                "replayed": response.replayed,
-                "promptVersion": response.prompt_version,
-                "decoding": {
-                    "temperature": 0.0,
-                    "topP": 1.0,
-                    "seed": 42,
-                    "maxTokens": int(os.getenv("MODEL_MAX_TOKENS", "2048")),
-                    "schemaConstrained": True,
-                },
-            },
+            # A list, because two models with different jobs produced this
+            # verdict. Each carries its own digest so revocation can target one
+            # stage without invalidating the other.
+            "reviewers": _reviewers(req, response),
             "gate": {
                 "failOnSeverity": _fail_on(),
                 "minConfidence": os.getenv("MIN_CONFIDENCE", "medium"),
@@ -116,6 +102,79 @@ def build_statement(req, response) -> dict:
             "complementaryScanners": req.complementary,
         },
     }
+
+
+def _reviewers(req, response) -> list[dict]:
+    """Stage A (localize) and Stage B (explain), in pipeline order.
+
+    Stage A is omitted when Antares did not run, rather than recorded as an
+    empty pass - a reviewer that did not run must not read as one that found
+    nothing.
+    """
+    reviewers = []
+
+    loc = getattr(req, "localizer", None)
+    if loc is not None:
+        reviewers.append({
+            "stage": "localize",
+            "kind": "llm",
+            "tool": loc.tool,
+            "model": loc.model,
+            "modelDigest": loc.model_digest or localizer_digest(),
+            "scope": "files",
+            "capability": "file-level vulnerability localization",
+            # Antares reports no line numbers, rationale, exploit or fix. Said
+            # plainly here so nobody reads this stage as a code review.
+            "providesExplanation": False,
+            "findings": len(loc.findings),
+            "cwesChecked": len(loc.cwes_checked),
+            "cwesAvailable": loc.cwes_available,
+            "coverageTruncated": loc.truncated,
+            "durationSeconds": round(loc.duration_seconds, 1),
+            "failedToolCalls": loc.failed_tool_calls,
+            "incompleteReason": loc.incomplete_reason,
+            "requestHash": loc.request_hash,
+            "decoding": loc.decoding,
+        })
+
+    reviewers.append({
+        "stage": "explain",
+        "kind": "llm",
+        "model": response.model,
+        "modelDigest": model_digest(),
+        "servedBy": os.getenv("MODEL_SERVED_BY", "openshift-ai/kserve"),
+        "backend": response.backend,
+        "scope": "diff",
+        "capability": "line-level reasoning, exploit and remediation",
+        "providesExplanation": True,
+        # Recorded, not live. Stated in the signed claim itself so a replayed
+        # answer can never silently pass as fresh inference.
+        "replayed": response.replayed,
+        "promptVersion": response.prompt_version,
+        "decoding": {
+            "temperature": 0.0,
+            "topP": 1.0,
+            "seed": 42,
+            "maxTokens": int(os.getenv("MODEL_MAX_TOKENS", "2048")),
+            "schemaConstrained": True,
+            "deterministic": True,
+        },
+    })
+    return reviewers
+
+
+def localizer_digest() -> str:
+    """Digest of the served Antares artifact."""
+    explicit = os.getenv("ANTARES_MODEL_DIGEST")
+    if explicit:
+        return explicit
+    for path in ("/mnt/models/antares.sha256", "/app/replay/antares.sha256"):
+        try:
+            with open(path) as handle:
+                return "sha256:" + handle.read().split()[0]
+        except (OSError, IndexError):
+            continue
+    return "unpinned"
 
 
 def _fail_on() -> list[str]:

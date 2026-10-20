@@ -90,8 +90,10 @@ def readyz() -> JSONResponse:
 @app.post("/review", response_model=ReviewResponse)
 def review(req: ReviewRequest) -> ReviewResponse:
     started = time.monotonic()
-    LOG.info("review request repo=%s commit=%s diff_bytes=%d files=%d",
-             req.repository, req.commit[:12], len(req.diff), len(req.files))
+    LOG.info("review request repo=%s commit=%s diff_bytes=%d files=%d "
+             "localizer=%s",
+             req.repository, req.commit[:12], len(req.diff), len(req.files),
+             f"{len(req.localizer.findings)} findings" if req.localizer else "absent")
 
     if not req.diff.strip():
         raise HTTPException(status_code=400, detail="diff is empty - nothing to review")
@@ -113,6 +115,18 @@ def review(req: ReviewRequest) -> ReviewResponse:
         HISTORY.appendleft(response)
         return response
 
+    # Mark which findings Stage A independently implicated. Recorded in the
+    # predicate, deliberately NOT used to change the verdict: the two models
+    # share a vendor and overlapping training data, so agreement is weaker
+    # evidence than it feels like.
+    if req.localizer is not None:
+        flagged = req.localizer.files()
+        for finding in parsed.findings:
+            finding.corroborated_by_localizer = any(
+                finding.file.endswith(f) or f.endswith(finding.file)
+                for f in flagged if f
+            )
+
     verdict = gate(parsed.findings)
     response = ReviewResponse(
         verdict=verdict,
@@ -127,11 +141,15 @@ def review(req: ReviewRequest) -> ReviewResponse:
         latency_ms=int((time.monotonic() - started) * 1000),
         usage=usage,
         replayed=replayed,
+        localizer=req.localizer,
     )
     response.predicate = build_statement(req, response)
 
-    LOG.info("review complete verdict=%s findings=%d latency_ms=%d replayed=%s",
-             verdict, len(response.findings), response.latency_ms, replayed)
+    corroborated = sum(1 for f in response.findings if f.corroborated_by_localizer)
+    LOG.info("review complete verdict=%s findings=%d (%d corroborated) "
+             "latency_ms=%d replayed=%s",
+             verdict, len(response.findings), corroborated,
+             response.latency_ms, replayed)
     HISTORY.appendleft(response)
     return response
 
@@ -171,13 +189,33 @@ def index() -> str:
                   <div class="fhead"><span class="sev" style="color:{SEV_COLOR.get(f.severity, "#888")}">
                   {f.severity.upper()}</span> {_esc(f.title)}</div>
                   <div class="meta">{_esc(f.cwe)} &middot; {_esc(f.owasp)} &middot;
-                  confidence {_esc(f.confidence)} &middot; <code>{_esc(f.file)}:{f.line}</code></div>
+                  confidence {_esc(f.confidence)} &middot; <code>{_esc(f.file)}:{f.line}</code>
+                  {' &middot; <span class="corr">also flagged by Stage A</span>' if f.corroborated_by_localizer else ''}</div>
                   <p>{_esc(f.rationale)}</p>
                   {f'<p class="x"><b>Exploit</b> {_esc(f.exploit)}</p>' if f.exploit else ""}
                   {f'<p class="fix"><b>Fix</b> {_esc(f.fix)}</p>' if f.fix else ""}
                 </div>'''
                 for f in r.findings
             )
+            loc = r.localizer
+            loc_html = ""
+            if loc is not None:
+                items = "".join(
+                    f'<li><code>{_esc(f.file)}</code> &middot; {_esc(f.cwe)} '
+                    f'&middot; likelihood {_esc(f.likelihood)}</li>'
+                    for f in loc.findings
+                ) or "<li>no files flagged</li>"
+                loc_html = (
+                    f'<div class="stage"><div class="stagehead">Stage A &middot; '
+                    f'{_esc(loc.tool)} ({_esc(loc.model)}) &middot; '
+                    f'file-level localization only</div>'
+                    f'<ul>{items}</ul>'
+                    f'<div class="meta">checked {len(loc.cwes_checked)} of '
+                    f'{loc.cwes_available or "?"} CWE classes &middot; '
+                    f'{loc.duration_seconds:.0f}s'
+                    f'{" &middot; coverage truncated" if loc.truncated else ""}'
+                    f'</div></div>'
+                )
             cards.append(f'''<section class="card">
               <header>
                 <span class="verdict {badge}">{r.verdict.upper()}</span>
@@ -188,6 +226,8 @@ def index() -> str:
                 &middot; backend <code>{_esc(r.backend)}</code></div>
               {f'<p class="summary">{_esc(r.summary)}</p>' if r.summary else ""}
               {f'<p class="err">{_esc(r.error)}</p>' if r.error else ""}
+              {loc_html}
+              {f'<div class="stagehead">Stage B &middot; {_esc(r.model)} &middot; reasoning</div>' if r.findings else ""}
               {findings_html}
             </section>''')
         body = "".join(cards)
@@ -228,6 +268,12 @@ def index() -> str:
   .x {{ color:#ffb3a7 }} .fix {{ color:#9be89b }} .err {{ color:#f4c145 }}
   code {{ background:#2a2a2a; padding:1px 5px; border-radius:3px; font-size:12.5px }}
   .empty {{ color:var(--dim) }}
+  .stage {{ background:#191919; border:1px solid var(--line); border-radius:6px;
+           padding:10px 12px; margin:12px 0 }}
+  .stagehead {{ font-size:12px; letter-spacing:.04em; color:var(--dim);
+               text-transform:uppercase; margin:14px 0 4px }}
+  .stage ul {{ margin:6px 0 8px; padding-left:18px; font-size:13.5px }}
+  .corr {{ color:#7ee7c0 }}
   @media (max-width:600px) {{ body {{ padding:16px }} .lat {{ margin-left:0 }} }}
 </style></head>
 <body><div class="wrap">

@@ -8,7 +8,8 @@ the two steps that bite, and both need slack.
 
 ## Sizing
 
-RHACM + RHACS + RHOAI + RHDH + Tekton on one cluster, plus an 8B model on CPU:
+RHACM + RHACS + RHOAI + RHDH + Tekton on one cluster, plus **two** models on
+CPU — Antares 1B for Stage A and Foundation-Sec-8B for Stage B:
 
 | | Minimum | Comfortable |
 |---|---|---|
@@ -17,15 +18,22 @@ RHACM + RHACS + RHOAI + RHDH + Tekton on one cluster, plus an 8B model on CPU:
 | Storage | 250 Gi | 400 Gi |
 | Workers | 3 | 3-5 |
 
-The model pod alone requests 6 CPU / 12 Gi. If you are tight, scale the
-`InferenceService` to zero and demo on the replay backend — the walkthrough is
-identical and you lose only the live-inference aside.
+The two model pods request 8 CPU / 17 Gi between them (Stage B: 6/12,
+Stage A: 2/5). If you are tight, scale the Stage B `InferenceService` to zero
+and demo it on the replay backend — the walkthrough is identical and you lose
+only the live-inference aside. Stage A is small enough to leave running.
 
 ## Prerequisites on your laptop
 
 `oc`, `git`, `jq`, `curl`, `cosign`, and optionally `tkn` (much nicer pipeline
-logs). You also need a Hugging Face account that has accepted the Llama
-license, because `Foundation-Sec-8B-Reasoning` is a Llama 3.1 derivative.
+logs).
+
+**A Hugging Face token is mandatory, not optional.** Both models are gated:
+`Foundation-Sec-8B-Reasoning` is a Llama 3.1 derivative, and `fdtn-ai/antares-1b`
+is behind its own licence click-through. For Antares there is no token-free
+path at all, because **the Antares CLI is distributed inside the gated model
+repository** (`assets/antares-cli.zip`) — so the token buys you the scanner as
+well as the weights. Accept both licences on the account you use.
 
 ## Order of operations
 
@@ -111,15 +119,26 @@ Sync waves, for when you need to reason about ordering:
 `SecuredCluster` CR shows degraded before you run this, that is expected — it
 is waiting for exactly this bundle.
 
-### 4. The model
+### 4. The models
 
 ```sh
 oc create secret generic huggingface-token -n lightwell-inward \
   --from-literal=token=hf_xxxxxxxx
 
+# Stage B - Foundation-Sec-8B
 oc delete job model-fetch -n lightwell-inward --ignore-not-found
 oc logs -f job/model-fetch -n lightwell-inward
+
+# Stage A - Antares 1B, and the Antares CLI
+oc delete job antares-fetch -n lightwell-inward --ignore-not-found
+oc logs -f job/antares-fetch -n lightwell-inward
 ```
+
+`antares-fetch` does two things: converts Antares 1B to an **F16** GGUF (CPU
+inference needs F16; the upstream POC builds BF16 for Apple Metal, which is the
+wrong precision here), and extracts the CLI into a virtualenv on a PVC that the
+pipeline mounts. It is much quicker than Stage B — roughly 2.5 GB rather than
+16 GB.
 
 The job downloads ~16 GB, converts to GGUF and quantises to `Q4_K_M`. **Budget
 40-70 minutes.** It is idempotent, so a re-run after success is free.
@@ -128,10 +147,12 @@ Much faster, if you have a GGUF mirrored internally: put its URL in
 `MODEL_GGUF_URL` in `gitops/components/rhoai/model-fetch-config`, commit, and
 the job downloads ~5 GB instead of converting.
 
-Then wait for KServe:
+Then wait for KServe on both:
 
 ```sh
-oc get inferenceservice foundation-sec-reasoning -n lightwell-inward -w
+oc get inferenceservice -n lightwell-inward -w
+# foundation-sec-reasoning  (Stage B)
+# antares                   (Stage A)
 ```
 
 First load of a 5 GB GGUF off a demo PVC is slow; the readiness probe allows
@@ -224,7 +245,7 @@ Inference drops to a few seconds and you can demo live with no replay cache.
 
 | Job | What it protects |
 |---|---|
-| `scanner` | 133 pytest tests, 90% coverage floor |
+| `scanner` | 165 pytest tests, 90% coverage floor |
 | `demo-app` | `mvn verify` — the three shipped tests must stay green **on the vulnerable code**, because Act 2 depends on it |
 | `manifests` | Every YAML parses, every kustomization builds, every Argo CD Application points at a directory that exists, shell and embedded Tekton Python parse |
 | `images` | Both Containerfiles build |
@@ -255,6 +276,23 @@ the two `oc` commands to repoint the deployment — including removing the
 ImageStream trigger, without which OpenShift puts the in-cluster image
 straight back.
 
+## Expect Stage A to be noisy
+
+Upstream's own recorded results are worth reading before you trust Stage A on
+stage. One of those runs is pinned here as test data
+(`components/ai-code-review/tests/fixtures/antares/`); the rest are in
+[sroecker/supreme-couscous](https://github.com/sroecker/supreme-couscous):
+
+- A single-file sweep on CPU took **167 s** with 47 tool calls, 7 of which failed.
+- Antares examined **3 of 944** CWE classes under `--max-cwes 3`.
+- The 350M model flagged all three *corrected* OAuth controls; 1B flagged two
+  of three.
+
+None of that breaks the demo, because Stage A cannot pass or fail a build. It
+is why the architecture puts it where it is. But do not promise the room that
+the small model will find the Java bug, and do not be surprised if it flags the
+fixed file — say "it's a search step, not the reviewer" and move on.
+
 ## Known rough edges
 
 **RHTAS timestamp authority** wants a `tsa-cert-chain` secret. The demo does
@@ -274,6 +312,11 @@ from the pre-seeded repo, and scaffolding is scene-setting rather than content.
 **RHDH catalog needs egress to GitHub** (it reads your fork over HTTPS). For a
 disconnected cluster, push this repo to the in-cluster Gitea and repoint
 `catalog.locations`.
+
+**Antares may not find the Java flaw.** It is a Python-leaning localizer and
+the planted bug is a Java authorization logic error with no injection sink.
+Stage B reviews the whole diff regardless, so the demo holds either way — but
+verify what actually happens in rehearsal rather than discovering it on stage.
 
 **Argo CD has cluster-admin.** Correct for a demo cluster that installs
 operators and cluster-scoped policy. If a security-minded attendee asks, the

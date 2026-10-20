@@ -40,7 +40,7 @@ That is Lightwell Inward.
 
 A developer writes a one-line authorization bug. It passes code review by eye, passes the unit tests, and passes Semgrep SAST clean. Then:
 
-1. **Cisco's `Foundation-Sec-8B-Reasoning`** — an open-weight security reasoning model — served on **Red Hat OpenShift AI**, reads the diff and explains exactly why it is a broken access control, with CWE, CVSS and a working attack payload.
+1. **Two Cisco models on Red Hat OpenShift AI, with two different jobs.** **Antares 1B** localizes likely weakness classes to files — cheap enough for every commit, and advisory only, because it reports no line, no rationale and no fix. Then **Foundation-Sec-8B-Reasoning** reads the diff and explains exactly why it is a broken access control, with CWE, CVSS and a working attack payload.
 2. The pipeline **fails closed**. No artifact is built.
 3. The developer fixes it. On the clean run, **Red Hat Trusted Artifact Signer** signs the image *and* attaches the AI review verdict as an in-toto attestation predicate.
 4. **RHACS** admission control rejects any image lacking a passing `lightwell-inward` attestation — proven live by trying to deploy the vulnerable build directly.
@@ -55,7 +55,7 @@ The whole point: *the AI's judgment is not advice in a web UI. It is a signed cl
 | **Red Hat Developer Hub** | Where the developer lives. Software Template scaffolds the app; the AI findings surface on the component page. |
 | **Red Hat Advanced Developer Suite** | Trusted Artifact Signer (sign + attest), Trusted Profile Analyzer (SBOM/VEX). The "build and sign artifacts" product. |
 | **OpenShift Pipelines** (Tekton) | The pipeline that orchestrates verify → SAST → AI review → build → sign → attest. |
-| **Red Hat OpenShift AI** | Serves the Cisco security model via KServe with a custom llama.cpp ServingRuntime. |
+| **Red Hat OpenShift AI** | Serves both Cisco models via KServe with custom llama.cpp ServingRuntimes. |
 | **RHACS** | Image scanning, and the admission policy that enforces the attestation. |
 | **RHACM** | Governance: ships the policy and the gate as GitOps cluster policy. |
 | **OpenShift GitOps** (Argo CD) | Installs and owns all of the above. App-of-apps, sync waves. |
@@ -76,7 +76,7 @@ gitops/
   components/          every operator, CR and workload
 components/
   ai-code-review/      the scanner service (FastAPI + model backends + attestation)
-    tests/             133 tests, incl. demo-integrity guards
+    tests/             165 tests, incl. demo-integrity guards
   vuln-demo-app/       Quarkus app with the planted flaw
 scripts/               bootstrap, model fetch, demo reset
 ```
@@ -108,11 +108,37 @@ Actual coverage is 98%.
 - Running it on stage: **[docs/DEMO-SCRIPT.md](docs/DEMO-SCRIPT.md)**
 - Understanding the design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 
+## Credits
+
+Stage A comes from [**sroecker/supreme-couscous**](https://github.com/sroecker/supreme-couscous)
+— the *Antares local POC* by **Steffen Röcker**, MIT licensed. It covers the
+inner developer loop: Antares launchers, vulnerable/fixed fixtures, recorded
+evaluation runs and a VS Code extension. This repo covers the outer loop —
+cluster, signing, enforcement, governance. **Use them together.**
+
+That repo is **linked, not vendored.** The only thing copied here is a pinned
+36 KB sample of one real recorded run, in
+`components/ai-code-review/tests/fixtures/antares/`, used as test data so the
+parser is verified against output this project does not control. Its
+`PROVENANCE.md` records the source commit, and
+`scripts/refresh-antares-fixture.sh` updates it deliberately.
+
+Neither the Antares model weights nor the Antares CLI are in this repository.
+Both are gated Cisco artifacts fetched at cluster-build time with a Hugging
+Face token.
+
+The models themselves are Cisco Foundation AI's
+[`fdtn-ai/antares-1b`](https://huggingface.co/fdtn-ai) and
+[`Foundation-Sec-8B-Reasoning`](https://huggingface.co/fdtn-ai/Foundation-Sec-8B-Reasoning),
+used under their own upstream licences.
+
 ## Honesty notes
 
 Carry these into the room; a security audience will ask.
 
 - **Lightwell Inward is a demo concept, not a Red Hat product.** It extends a real product with an idea. Say so.
-- **The model runs quantized on CPU** in this build (no GPU assumed). It is the real Cisco model and real inference, just slow — 30-90s per review. The stage path uses a replay cache of *actual captured model output* for determinism; the UI labels it `REPLAY` so you are never claiming live inference when it isn't. One env var switches to live.
+- **Both models run on CPU** in this build (no GPU assumed). Real Cisco models, real inference, just slow — a recorded single-file Antares sweep took 167s, and a Stage B review is 30-90s. The stage path can use a replay cache of *actual captured model output* for determinism; the UI labels it `REPLAY` so you are never claiming live inference when it isn't.
+- **Antares is a localizer, not a reviewer.** It reports which file probably holds which CWE class and nothing more. It cannot pass or fail a build here, and that is deliberate — it scans a ranked subset of ~944 CWE classes, so its silence means little, and upstream measured it flagging already-corrected code. Do not let it be described as the thing that found the bug.
+- **Two models from one vendor are not two opinions.** Antares and Foundation-Sec share a vendor and overlapping training data. When both implicate a file the demo records `corroborated_by_localizer` and changes nothing else.
 - **An LLM is not a soundness proof.** It finds classes of bug SAST structurally cannot (intent/logic) and misses things SAST catches trivially. The demo runs both, on purpose. Do not let the story become "AI replaces SAST."
 - **Attesting an AI verdict does not make the verdict correct.** It makes it *accountable* — you know which model, which prompt, which commit, and you can revoke. That is the actual contribution, and it is the Lightwell lesson.

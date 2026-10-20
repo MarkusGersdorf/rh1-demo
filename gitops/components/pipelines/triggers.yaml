@@ -65,6 +65,10 @@ spec:
                 resources:
                   requests:
                     storage: 5Gi
+          # Read-only in practice: populated once by the antares-fetch job.
+          - name: antares
+            persistentVolumeClaim:
+              claimName: antares-cli
 ---
 apiVersion: triggers.tekton.dev/v1beta1
 kind: EventListener

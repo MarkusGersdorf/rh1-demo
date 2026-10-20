@@ -68,6 +68,34 @@ def make_request():
     return _make
 
 
+# A pinned copy of real upstream output, not hand-written data. See
+# tests/fixtures/antares/PROVENANCE.md for the source commit and why it is
+# frozen rather than tracked as a submodule.
+ANTARES_REPORT = (Path(__file__).resolve().parent / "fixtures" / "antares"
+                  / "cpu-sweep" / "report.json")
+
+
+@pytest.fixture
+def antares_report_dir(tmp_path):
+    """A copy of the pinned CPU sweep, so tests run against real output."""
+    import shutil
+    src = ANTARES_REPORT.parent
+    dest = tmp_path / "antares-report"
+    shutil.copytree(src, dest)
+    # The antares-localize task writes this sidecar so the attestation can pin
+    # Stage A. Include it, or the digest path goes untested.
+    (dest / "model.sha256").write_text(
+        "7c1e4b0ad93f2516c8a4d7e0b51f3296a8c4d0e2f1b7a6943c5d8e0f1a2b3c4d\n")
+    return dest
+
+
+@pytest.fixture
+def localizer_result(antares_report_dir):
+    from app.localizer import parse_report_dir
+
+    return parse_report_dir(antares_report_dir)
+
+
 @pytest.fixture
 def scanner_app(monkeypatch):
     """Reload app.main with a given environment, returning a TestClient factory."""

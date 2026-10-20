@@ -81,7 +81,9 @@ def test_response_carries_a_predicate(client, vulnerable_diff):
 def test_replayed_responses_are_labelled(client, vulnerable_diff):
     body = review(client, vulnerable_diff).json()
     assert body["replayed"] is True
-    assert body["predicate"]["predicate"]["reviewer"]["replayed"] is True
+    explain = [r for r in body["predicate"]["predicate"]["reviewers"]
+               if r["stage"] == "explain"][0]
+    assert explain["replayed"] is True
 
 
 def test_image_digest_binds_the_subject(client, vulnerable_diff):
@@ -186,3 +188,79 @@ def test_ui_escapes_model_output(scanner_app, tmp_path, monkeypatch):
     html = c.get("/").text
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
+
+
+# --------------------------------------------------------------------------
+# two-stage behaviour
+# --------------------------------------------------------------------------
+
+def test_stage_b_reviews_the_diff_even_when_stage_a_is_absent(
+        client, vulnerable_diff):
+    """Stage A is advisory. Its absence must not disable the review.
+
+    Antares is a Python-leaning localizer being asked about Java here, so
+    gating the explanation on a localizer hit would let one model's miss
+    silently switch off the other.
+    """
+    body = review(client, vulnerable_diff).json()
+    assert body["verdict"] == "fail"
+    assert body["localizer"] is None
+    assert any(f["cwe"] == "CWE-639" for f in body["findings"])
+
+
+def test_localizer_is_echoed_into_the_response(client, vulnerable_diff,
+                                               localizer_result):
+    body = review(client, vulnerable_diff,
+                  localizer=localizer_result.model_dump(mode="json")).json()
+    assert body["localizer"]["model"] == "antares-1b"
+    assert body["localizer"]["cwes_available"] == 944
+
+
+def test_both_stages_reach_the_predicate(client, vulnerable_diff,
+                                         localizer_result):
+    body = review(client, vulnerable_diff,
+                  localizer=localizer_result.model_dump(mode="json")).json()
+    stages = [r["stage"] for r in body["predicate"]["predicate"]["reviewers"]]
+    assert stages == ["localize", "explain"]
+
+
+def test_corroboration_is_marked_when_files_agree(client, vulnerable_diff,
+                                                  localizer_result):
+    """Stage A flagged app.py; the demo's findings are in AccountResource.java,
+    so nothing should be marked corroborated here."""
+    body = review(client, vulnerable_diff,
+                  localizer=localizer_result.model_dump(mode="json")).json()
+    assert all(not f["corroborated_by_localizer"] for f in body["findings"])
+
+
+def test_corroboration_matches_on_path_suffix(client, vulnerable_diff,
+                                              localizer_result):
+    """Antares reports paths relative to the scan root; the reasoner reports
+    repo-relative paths. They must still be recognised as the same file."""
+    payload = localizer_result.model_dump(mode="json")
+    payload["findings"][0]["file"] = (
+        "src/main/java/com/redhat/demo/accounts/AccountResource.java")
+    body = review(client, vulnerable_diff, localizer=payload).json()
+    assert any(f["corroborated_by_localizer"] for f in body["findings"])
+
+
+def test_corroboration_does_not_change_the_verdict(client, fixed_diff,
+                                                   localizer_result):
+    """Two models agreeing is weaker evidence than it feels like - same vendor,
+    overlapping training data. Corroboration is recorded, never acted on."""
+    payload = localizer_result.model_dump(mode="json")
+    for f in payload["findings"]:
+        f["file"] = "src/main/java/com/redhat/demo/accounts/AccountResource.java"
+    body = review(client, fixed_diff, localizer=payload).json()
+    assert body["verdict"] == "pass", \
+        "a localizer hit must not fail a change the reasoner cleared"
+
+
+def test_ui_shows_stage_a_and_its_limits(client, vulnerable_diff,
+                                         localizer_result):
+    review(client, vulnerable_diff,
+           localizer=localizer_result.model_dump(mode="json"))
+    html = client.get("/").text
+    assert "Stage A" in html
+    assert "file-level localization only" in html
+    assert "944" in html, "coverage must be visible, not just in the predicate"

@@ -15,6 +15,28 @@ Red Hat product, and `README.md` says so deliberately.
 Target: OpenShift 4.22, single cluster, **no GPU**. Everything on the cluster is
 installed by Argo CD from this repo.
 
+Stage A comes from
+**[sroecker/supreme-couscous](https://github.com/sroecker/supreme-couscous)** —
+the *Antares local POC* by Steffen Röcker (public, MIT). That repo is **linked,
+not vendored**. This repo depends on exactly two things from it:
+
+1. `components/ai-code-review/tests/fixtures/antares/` — a **pinned 36 KB copy**
+   of one real recorded CPU run, used as test data. See its `PROVENANCE.md` for
+   the source commit and why it is frozen.
+2. The CLI's invocation contract, documented in the `antares-localize` task.
+
+Nothing at build or run time needs that repo: Argo CD syncs `gitops/` only, the
+scanner image's context is `components/ai-code-review`, and the Antares CLI and
+weights are gated Cisco artifacts fetched onto a PVC at cluster-build time.
+
+The fixtures are deliberately frozen rather than tracked as a submodule or
+subtree — a submodule on `main` would let an unrelated upstream commit break CI
+here. Absorb a format change on purpose:
+
+```sh
+./scripts/refresh-antares-fixture.sh     # then read what the tests say
+```
+
 **The stage narrative is load-bearing.** Several things that look like bugs or
 omissions are deliberate and protected by tests. Read "Invariants" before
 changing anything under `components/`.
@@ -32,7 +54,7 @@ cd components/ai-code-review
 python3.12 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
 
-pytest                                          # 133 tests
+pytest                                          # 165 tests
 pytest tests/test_api.py                        # one file
 pytest tests/test_api.py::test_empty_diff_is_rejected   # one test
 pytest -k replay                                # by expression
@@ -115,10 +137,32 @@ Order matters; see `docs/SETUP.md` for what each one waits on.
 ./scripts/verify.sh                # pre-flight; run before going on stage
 ```
 
+Refresh the pinned Antares fixtures (deliberate, not routine):
+
+```sh
+./scripts/refresh-antares-fixture.sh
+```
+
 Stage flow: `demo-push-vulnerable.sh` → `demo-push-fix.sh` →
 `demo-rogue-deploy.sh` → `demo-deploy-signed.sh` → `demo-reset.sh`.
 
 ## Architecture
+
+### Two models, two jobs
+
+| | Stage A — `antares-localize` | Stage B — `ai-code-review` |
+|---|---|---|
+| Model | Cisco Antares 1B (`fdtn-ai/antares-1b`) | Foundation-Sec-8B-Reasoning |
+| Job | file-level CWE localization | line-level reasoning |
+| Output | file + CWE + likelihood, **nothing else** | line, rationale, exploit, fix |
+| Decoding | temperature 0.3, provider may vary | temperature 0, seeded, schema-constrained |
+| Blocks the build? | **Never.** Advisory. | Yes |
+
+Antares reports **no line numbers, no rationale, no remediation** — its model
+spec says "file-level vulnerability localization" and a finding is five
+fields. It is a search step, not a reviewer. Its CLI ships *inside* the gated
+Hugging Face model download (`assets/antares-cli.zip`), which is why
+`antares-fetch` needs an HF token and extracts the CLI onto a PVC.
 
 ### The argument the code implements
 
@@ -128,11 +172,12 @@ security review of a developer's diff becomes a **signed in-toto attestation**
 that gates admission and is **revocable by model digest**. The review is the
 least novel part; the attestation is the point.
 
-Pipeline (`gitops/components/pipelines/pipeline.yaml`, 8 tasks):
+Pipeline (`gitops/components/pipelines/pipeline.yaml`, 9 tasks):
 
 ```
-fetch-source → lightwell-verify → sast-semgrep → ai-code-review
-                                                      ↓ fail ⇒ no artifact
+fetch-source → lightwell-verify ┐
+             → sast-semgrep     ├→ ai-code-review (Stage B)
+             → antares-localize ┘        ↓ fail ⇒ no artifact
                                    build-image → sign-and-attest → ec-validate
                                                → acs-image-check
 ```
@@ -141,7 +186,9 @@ fetch-source → lightwell-verify → sast-semgrep → ai-code-review
 - `sast-semgrep` — **passes clean on the planted flaw.** This is the point, not
   a Semgrep failure: there is no taint flow and the check is syntactically
   present, so pattern matching has nothing to match.
-- `ai-code-review` — **blocks.** Calls the scanner service.
+- `antares-localize` — Stage A. File-level CWE localization. **Never fails the
+  build**; it feeds Stage B as a prior. See the Stage A invariant below.
+- `ai-code-review` — Stage B. **Blocks.** Calls the scanner service.
 - `sign-and-attest` — RHTAS/cosign signs the image *and* attaches the verdict.
 - `ec-validate` — Enterprise Contract evaluates rego against the predicate.
   RHACS can only verify *that* an image is signed; EC reads inside the claim.
@@ -168,11 +215,22 @@ demo — everything else is plumbing to get a model's opinion into that structur
 
 ### Model serving
 
-`Foundation-Sec-8B-Reasoning` (Cisco, open weights) on RHOAI via KServe with a
-**custom llama.cpp ServingRuntime** at Q4_K_M, because there is no GPU. KServe
-runs in **RawDeployment** mode, which deliberately avoids installing OpenShift
-Serverless and Service Mesh. The GPU path (`servingruntime-vllm-gpu.yaml`) ships
-but is not in the kustomization.
+Two InferenceServices, both llama.cpp on CPU via KServe in **RawDeployment**
+mode, which deliberately avoids installing OpenShift Serverless and Service
+Mesh:
+
+| InferenceService | Model | Precision | Requests |
+|---|---|---|---|
+| `foundation-sec-reasoning` | Foundation-Sec-8B-Reasoning | Q4_K_M | 6 CPU / 12 Gi |
+| `antares` | Antares 1B | **F16** | 2 CPU / 5 Gi |
+
+Antares needs F16, not the BF16 the upstream POC builds for Apple Metal — its
+launcher selects precision by device and CPU mode wants F16. Its CLI drives
+`/v1/completions`, not the chat API (`use_completions_api: true` in the model
+spec); llama-server serves both, so do not "fix" the endpoint.
+
+The GPU path for Stage B (`servingruntime-vllm-gpu.yaml`) ships but is not in
+the kustomization.
 
 ### GitOps
 
@@ -207,6 +265,23 @@ replay with no fallback ⇒ `verdict: error` ⇒ pipeline fails. No configuratio
 may turn a backend error into a pass; if you add a setting, extend
 `test_api.py::test_no_configuration_makes_a_backend_error_pass`.
 
+**Stage A is advisory and must stay that way.** It never fails the pipeline,
+Stage B reviews the whole diff whether or not Antares flagged anything, and
+`corroborated_by_localizer` is recorded but never changes the verdict. Three
+reasons, in order of importance: a localizer's silence is weak evidence (it
+scans a ranked subset of ~944 CWE classes); its precision on already-fixed
+code is poor (upstream measured the 350M flagging all three *corrected* OAuth
+controls); and the two models share a vendor and training data, so their
+agreement is not independent corroboration. Pinned by
+`test_api.py::test_corroboration_does_not_change_the_verdict` and
+`test_stage_b_reviews_the_diff_even_when_stage_a_is_absent`.
+
+**Antares' `selection` block is nested under `metadata`, not at the top
+level.** Reading it from the wrong place silently reports zero CWE coverage,
+which understates what Stage A examined and no exception ever surfaces. It bit
+once, in both `app/localizer.py` and the Tekton payload builder. Regression
+test: `test_localizer.py::test_coverage_is_read_from_the_nested_selection_block`.
+
 **Never commit a private key.** `sast-semgrep` runs `--config=p/secrets`; a hit
 would make SAST non-clean and destroy Act 2. Only `publicKey.pem` is committed.
 
@@ -214,6 +289,11 @@ would make SAST non-clean and destroy Act 2. Only `publicKey.pem` is committed.
 `app/attest.py` requires the same change in the `ec-validate` task in
 `gitops/components/pipelines/tasks.yaml`. Pinned by
 `test_attest.py::test_predicate_keys_match_the_enterprise_contract_rego`.
+`reviewers` is a **list**, one entry per stage, each with its own
+`modelDigest` so revocation can target one model. Two rego rules depend on
+this: every reviewer must be pinned, and at least one must have
+`providesExplanation: true` — otherwise "pass" could mean nothing more than
+"a localizer checked a few CWE classes and stayed quiet".
 
 **Replay provenance must stay honest.** Entries are `captured` (real model) or
 `hand-authored-seed` (worked example shipped so the pipeline is testable before
