@@ -152,6 +152,10 @@ for f in glob.glob('gitops/**/*.yaml',recursive=True): list(yaml.safe_load_all(o
 print('ok')"
 
 for f in scripts/*.sh; do bash -n "$f" || echo "FAIL $f"; done
+
+# Tekton manifests wire up: taskRefs, params, workspaces, results, runAfter.
+# Argo CD deploys a broken Pipeline happily; Tekton objects at PipelineRun time.
+python3 scripts/validate-pipeline-wiring.py
 ```
 
 ### Cluster lifecycle
@@ -339,6 +343,26 @@ controls); and the two models share a vendor and training data, so their
 agreement is not independent corroboration. Pinned by
 `test_api.py::test_corroboration_does_not_change_the_verdict` and
 `test_stage_b_reviews_the_diff_even_when_stage_a_is_absent`.
+
+**Some CRDs are second-order: they arrive when an operator's CR reconciles,
+not when its CSV installs.** A succeeded CSV is not the same as "the kind
+exists". The ones that bite here:
+
+| Kind | Registered by |
+|---|---|
+| `Task`, `Pipeline`, `EventListener`, `TriggerTemplate` | the auto-created `TektonConfig` reconciling — the Pipelines CSV only registers `tektonconfigs/tektonpipelines/tektontriggers.operator.tekton.dev` |
+| `InferenceService`, `ServingRuntime` | `DataScienceCluster` |
+| `Policy`, `Placement`, `PlacementBinding` | `MultiClusterHub` |
+
+`bootstrap.sh` installs Argo CD health checks for `Subscription`,
+`MultiClusterHub` and `DataScienceCluster` so sync waves gate on all three.
+There is deliberately no gate for `TektonConfig`: the Pipelines CSV lands in
+wave -5 and the Tekton manifests in wave 10, with waves 0 and 5 — a
+`MultiClusterHub` reaching Running and a `DataScienceCluster` reaching
+Available — in between. The margin is tens of minutes against a reconcile that
+takes a few, and the Application retries 20 times with backoff on top. Adding
+a PreSync hook Job would introduce RBAC, image and ServiceAccount failure
+surface to guard something already covered twice.
 
 **Antares' `selection` block is nested under `metadata`, not at the top
 level.** Reading it from the wrong place silently reports zero CWE coverage,

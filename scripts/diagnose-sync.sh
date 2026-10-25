@@ -105,8 +105,7 @@ check_crd dscinitializations.dscinitialization.opendatahub.io  "rhods-operator"
 check_crd datascienceclusters.datasciencecluster.opendatahub.io "rhods-operator"
 check_crd securesigns.rhtas.redhat.com                         "rhtas-operator"
 check_crd backstages.rhdh.redhat.com                           "rhdh"
-check_crd pipelines.tekton.dev                                 "openshift-pipelines"
-check_crd tasks.tekton.dev                                     "openshift-pipelines"
+check_crd tektonconfigs.operator.tekton.dev                    "openshift-pipelines"
 echo
 echo "  second-order - these appear only after an operator CR reconciles:"
 check_crd inferenceservices.serving.kserve.io   "<- DataScienceCluster (KServe component)"
@@ -114,6 +113,14 @@ check_crd servingruntimes.serving.kserve.io     "<- DataScienceCluster (KServe c
 check_crd policies.policy.open-cluster-management.io "<- MultiClusterHub"
 check_crd placements.cluster.open-cluster-management.io "<- MultiClusterHub"
 check_crd securitypolicies.config.stackrox.io   "<- RHACS, version dependent (optional)"
+# The Pipelines CSV registers the operator's OWN CRDs (tektonconfigs,
+# tektonpipelines, tektontriggers). The Tekton API below arrives only when the
+# auto-created TektonConfig reconciles and deploys the components - so a
+# succeeded CSV does not mean these exist.
+check_crd tasks.tekton.dev                      "<- TektonConfig reconcile"
+check_crd pipelines.tekton.dev                  "<- TektonConfig reconcile"
+check_crd eventlisteners.triggers.tekton.dev    "<- TektonConfig reconcile (triggers)"
+check_crd triggertemplates.triggers.tekton.dev  "<- TektonConfig reconcile (triggers)"
 
 # --------------------------------------------------------------------------
 step "Operator CRs"
@@ -121,7 +128,8 @@ step "Operator CRs"
 for item in "multiclusterhub:multiclusterhub:open-cluster-management:{.status.phase}" \
             "central:stackrox-central-services:stackrox:{.status.conditions[?(@.type=='Deployed')].status}" \
             "datasciencecluster:default-dsc::{.status.phase}" \
-            "securesign:securesign:trusted-artifact-signer:{.status.conditions[?(@.type=='Ready')].status}"; do
+            "securesign:securesign:trusted-artifact-signer:{.status.conditions[?(@.type=='Ready')].status}" \
+            "tektonconfig:config::{.status.conditions[?(@.type=='Ready')].status}"; do
   IFS=: read -r kind name ns path <<< "${item}"
   args=("${kind}" "${name}")
   [[ -n "${ns}" ]] && args+=(-n "${ns}")

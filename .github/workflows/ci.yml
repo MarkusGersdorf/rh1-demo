@@ -225,6 +225,12 @@ jobs:
           sys.exit(failed)
           PY
 
+      - name: Tekton manifests wire up
+        # Argo CD deploys a Pipeline whose taskRef points at nothing without
+        # complaint; Tekton only objects when a PipelineRun starts, which for
+        # this repo means on stage.
+        run: python3 scripts/validate-pipeline-wiring.py
+
       - name: Shell scripts parse
         run: |
           failed=0
