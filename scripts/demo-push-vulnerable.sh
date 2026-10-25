@@ -22,7 +22,7 @@ date range. Owner-only, same as the account lookup.
 Tests: owner happy path, unknown account, date filtering."
 
 SHA="$(git rev-parse --short HEAD)"
-git -c http.sslVerify=false push -q origin main
+git push -q origin main
 
 cat <<MSG
 

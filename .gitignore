@@ -15,3 +15,15 @@ __pycache__/
 coverage.xml
 htmlcov/
 .pytest_cache/
+
+# Credentials and local config. SETUP tells you to export HF_TOKEN, so a .env
+# holding it is the likely accident.
+.env
+.env.*
+*.kubeconfig
+.local/gitea-credentials
+
+# Model weights and GGUF conversions - multi-GB and not ours to redistribute.
+models/
+*.gguf
+*.safetensors

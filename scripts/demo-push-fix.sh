@@ -23,7 +23,7 @@ Also stops echoing the date parser's exception message back to the client.
 Found by the Lightwell Inward code review gate (CWE-639)."
 
 SHA="$(git rev-parse --short HEAD)"
-git -c http.sslVerify=false push -q origin main
+git push -q origin main
 
 cat <<MSG
 

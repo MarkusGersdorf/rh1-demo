@@ -22,7 +22,7 @@ if [[ -d "${CLONE}" ]]; then
   BASE="$(git rev-list --max-parents=0 HEAD | tail -1)"
   git reset -q --hard "${BASE}"
   git clean -qfd -e .demo
-  git -c http.sslVerify=false push -q --force origin main
+  git push -q --force origin main
   ok "main reset to $(git rev-parse --short HEAD) ($(git log -1 --pretty='%s' | head -1))"
 else
   warn "no local clone - run ./scripts/04-seed-gitea.sh"

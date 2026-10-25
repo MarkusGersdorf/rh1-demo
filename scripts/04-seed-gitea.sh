@@ -101,8 +101,18 @@ git commit -q -m "Initial accounts API
 
 Account lookup with owner authorisation. No statement history yet."
 
-git remote add origin "https://${GITEA_USER}:${GITEA_PASSWORD}@${GITEA_HOST}/${GITEA_USER}/${REPO}.git"
-git -c http.sslVerify=false push -q --force -u origin main
+# Credentials go in a 0600 file read by git's store helper, NOT in the remote
+# URL. Embedding them in the URL writes the password into .git/config, where
+# `git remote -v` will happily print it - and this is a demo that gets
+# projected. The file is gitignored; the remote stays clean.
+CREDS="${ROOT}/.local/gitea-credentials"
+install -m 0600 /dev/null "${CREDS}"
+printf 'https://%s:%s@%s\n' "${GITEA_USER}" "${GITEA_PASSWORD}" "${GITEA_HOST}" > "${CREDS}"
+
+git remote add origin "https://${GITEA_HOST}/${GITEA_USER}/${REPO}.git"
+git config credential.helper "store --file=${CREDS}"
+git config http.sslVerify false
+git push -q --force -u origin main
 ok "pushed base commit $(git rev-parse --short HEAD) to main"
 
 step "Webhook"
@@ -131,7 +141,7 @@ cat <<MSG
 $(ok "Gitea seeded")
 
   repo       ${GITEA_URL}/${GITEA_USER}/${REPO}
-  login      ${GITEA_USER} / ${GITEA_PASSWORD}
+  login      ${GITEA_USER}  (password in \${GITEA_PASSWORD}, or .local/gitea-credentials)
   local clone ${CLONE}  (main at the clean base commit)
 
 Stage flow:
