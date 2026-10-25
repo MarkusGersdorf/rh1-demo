@@ -293,6 +293,20 @@ retry. That is expected — do not hand-apply to "fix" it.
 
 ## Invariants
 
+**Every `serving.kserve.io` resource needs
+`argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true`.** Those
+CRDs are installed by the `DataScienceCluster`, which lives in the *same*
+Application. Argo CD plans a whole Application before applying any of it, so a
+single un-annotated resource in a group the API server has never heard of
+fails the plan — and the DSC that would install the CRDs is never applied.
+Unlike the CRD race above this **deadlocks instead of converging**: the
+Application retries to its limit reporting `failed to discover server
+resources for group version serving.kserve.io/v1alpha1`, which reads exactly
+like the transient error and is not one. It bit once, on the three
+`ServingRuntime`s — the two `InferenceService`s had the annotation, which is
+why only half the resources failed and the cause looked like RHOAI. Pinned by
+the `KServe resources skip the dry run` step in `.github/workflows/ci.yml`.
+
 Breaking any of these breaks the demo on stage rather than in CI, except where
 a test catches it.
 

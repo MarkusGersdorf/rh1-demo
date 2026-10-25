@@ -15,6 +15,11 @@ metadata:
   annotations:
     openshift.io/display-name: "llama.cpp (CPU, GGUF)"
     opendatahub.io/recommended-accelerators: "[]"
+    # The serving.kserve.io CRDs arrive from the DataScienceCluster in this
+    # same Application, so they do not exist when Argo CD plans the sync.
+    # Without this, planning fails for the whole Application and the DSC that
+    # would install them is never applied. See the invariant in AGENTS.md.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
   labels:
     opendatahub.io/dashboard: "true"
 spec:

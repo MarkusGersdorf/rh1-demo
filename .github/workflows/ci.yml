@@ -199,6 +199,32 @@ jobs:
           sys.exit(failed)
           PY
 
+      - name: KServe resources skip the dry run
+        # The serving.kserve.io CRDs are installed by the DataScienceCluster,
+        # which lives in the same Application. Argo CD plans a whole
+        # Application before applying any of it, so one un-annotated resource
+        # in a group the API server has never heard of fails the plan - and
+        # the DSC that would install the CRDs never gets applied. It
+        # deadlocks rather than converging on retry, which is what makes this
+        # worth a check: it looks like the transient CRD race and is not.
+        run: |
+          python - <<'PY'
+          import glob, sys, yaml
+          ANN, OPT = "argocd.argoproj.io/sync-options", "SkipDryRunOnMissingResource=true"
+          failed = 0
+          for path in sorted(glob.glob("gitops/components/**/*.yaml", recursive=True)):
+              for doc in yaml.safe_load_all(open(path)):
+                  if not doc or not str(doc.get("apiVersion", "")).startswith("serving.kserve.io/"):
+                      continue
+                  name = doc["metadata"]["name"]
+                  if OPT not in (doc["metadata"].get("annotations") or {}).get(ANN, ""):
+                      print(f"FAIL {path}: {doc['kind']}/{name} needs {ANN}: {OPT}")
+                      failed = 1
+                  else:
+                      print(f"ok   {doc['kind']}/{name}")
+          sys.exit(failed)
+          PY
+
       - name: Shell scripts parse
         run: |
           failed=0

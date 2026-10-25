@@ -18,6 +18,8 @@ metadata:
   namespace: lightwell-inward
   annotations:
     openshift.io/display-name: "vLLM (NVIDIA GPU)"
+    # See servingruntime-llamacpp-cpu.yaml: the CRD does not exist at plan time.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
   labels:
     opendatahub.io/dashboard: "true"
 spec:
