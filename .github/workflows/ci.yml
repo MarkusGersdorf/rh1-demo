@@ -225,6 +225,15 @@ jobs:
           sys.exit(failed)
           PY
 
+      - name: Argo CD health checks compile and behave
+        # Lua embedded in YAML, and load-bearing: a broken Subscription check
+        # means sync wave -5 finishes before any CRD is registered. Needs a lua
+        # interpreter, or the script skips and the checks go unverified.
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+          sudo ln -sf "$(command -v lua5.4)" /usr/local/bin/lua
+          ./scripts/test-health-checks.sh
+
       - name: Tekton manifests wire up
         # Argo CD deploys a Pipeline whose taskRef points at nothing without
         # complaint; Tekton only objects when a PipelineRun starts, which for

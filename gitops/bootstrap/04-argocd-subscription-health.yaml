@@ -19,6 +19,21 @@
 #
 # Applied by scripts/bootstrap.sh BEFORE the root Application, because it has
 # to be in place for the very first sync.
+#
+# This is a `oc patch --type merge` body, NOT something to `oc apply`. The
+# apiVersion/kind/metadata are here so it is a valid Kubernetes document - CI
+# asserts every YAML under gitops/ has them - and because naming the target
+# makes the file readable on its own. A merge patch that repeats the target's
+# own identity is a no-op on those fields.
+#
+# Do not `oc apply` it: that would make this file the owner of the whole CR and
+# strip the defaults the GitOps operator manages. Nothing syncs
+# gitops/bootstrap/, so Argo CD will not try.
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: openshift-gitops
+  namespace: openshift-gitops
 spec:
   resourceHealthChecks:
     - group: operators.coreos.com

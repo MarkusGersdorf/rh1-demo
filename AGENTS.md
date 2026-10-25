@@ -156,7 +156,18 @@ for f in scripts/*.sh; do bash -n "$f" || echo "FAIL $f"; done
 # Tekton manifests wire up: taskRefs, params, workspaces, results, runAfter.
 # Argo CD deploys a broken Pipeline happily; Tekton objects at PipelineRun time.
 python3 scripts/validate-pipeline-wiring.py
+
+# The Argo CD health checks compile and behave. Needs lua and PyYAML; skips
+# cleanly without them, so check the output actually says it ran.
+./scripts/test-health-checks.sh
 ```
+
+`gitops/bootstrap/04-argocd-subscription-health.yaml` is an `oc patch --type
+merge` body, not something to `oc apply` — applying it would make the file
+owner of the whole ArgoCD CR and strip the operator's managed defaults. It
+carries `apiVersion`/`kind`/`metadata` anyway, because CI asserts every YAML
+under `gitops/` has them and naming the target makes the file readable alone.
+Nothing syncs `gitops/bootstrap/`, so Argo CD will not touch it.
 
 ### Cluster lifecycle
 
