@@ -76,19 +76,38 @@ local T = {
       state = "AtLatestKnown", conditions = {} } }, "Healthy" },
   { "Subscription", "still installing",
     { status = { currentCSV = "rhods-operator.v2.99.0", conditions = {} } }, "Progressing" },
+  { "MultiClusterHub", "no status yet", {}, "Progressing" },
   { "MultiClusterHub", "hub running",
     { status = { phase = "Running", currentVersion = "2.17.0" } }, "Healthy" },
   { "MultiClusterHub", "hub installing",
     { status = { phase = "Installing" } }, "Progressing" },
   { "MultiClusterHub", "hub failed",
     { status = { phase = "Error" } }, "Degraded" },
-  { "DataScienceCluster", "components available",
-    { status = { conditions = { { type = "Available", status = "True" } } } }, "Healthy" },
-  { "DataScienceCluster", "reconcile failed",
-    { status = { conditions = { { type = "ReconcileComplete", status = "False",
-      message = "kserve failed" } } } }, "Degraded" },
+  -- FAIL OPEN. A phase name this script does not know must not stall the
+  -- bootstrap forever; the gate is an optimisation, a deadlock is a
+  -- regression on the retry-based convergence it replaced.
+  { "MultiClusterHub", "unknown phase -> fails open",
+    { status = { phase = "Reconciling" } }, "Healthy" },
+  { "MultiClusterHub", "status but no phase -> fails open",
+    { status = { currentVersion = "2.17.0" } }, "Healthy" },
+
+  { "DataScienceCluster", "no status yet", {}, "Progressing" },
+  { "DataScienceCluster", "phase Ready",
+    { status = { phase = "Ready" } }, "Healthy" },
   { "DataScienceCluster", "still reconciling",
     { status = { phase = "Progressing", conditions = {} } }, "Progressing" },
+  { "DataScienceCluster", "phase Error",
+    { status = { phase = "Error" } }, "Degraded" },
+  { "DataScienceCluster", "ReconcileComplete=False under an odd phase",
+    { status = { phase = "Whatever", conditions = {
+      { type = "ReconcileComplete", status = "False", message = "kserve failed" } } } },
+    "Degraded" },
+  -- The component conditions are named individually and vary by RHOAI
+  -- version, so an unfamiliar shape must fail open rather than hang.
+  { "DataScienceCluster", "only component conditions -> fails open",
+    { status = { conditions = {
+      { type = "ModelControllerReady", status = "True" },
+      { type = "KserveReady", status = "True" } } } }, "Healthy" },
 }
 
 local bad = 0

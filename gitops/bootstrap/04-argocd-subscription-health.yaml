@@ -96,54 +96,97 @@ spec:
       kind: MultiClusterHub
       check: |
         local hs = {}
-        if obj.status == nil or obj.status.phase == nil then
+
+        -- The CR exists but the operator has not touched it yet.
+        if obj.status == nil then
           hs.status = "Progressing"
           hs.message = "waiting for the hub to start installing"
           return hs
         end
-        if obj.status.phase == "Running" then
+
+        local phase = obj.status.phase
+
+        if phase == "Running" then
           hs.status = "Healthy"
-          hs.message = "hub running" .. (obj.status.currentVersion
-            and (" (" .. obj.status.currentVersion .. ")") or "")
+          hs.message = "hub running" ..
+            (obj.status.currentVersion and (" (" .. obj.status.currentVersion .. ")") or "")
           return hs
         end
-        if obj.status.phase == "Error" then
+        if phase == "Error" then
           hs.status = "Degraded"
-          hs.message = "hub install failed - check the multiclusterhub status"
+          hs.message = "hub install failed - oc describe multiclusterhub"
           return hs
         end
-        hs.status = "Progressing"
-        hs.message = "hub phase " .. obj.status.phase
+        if phase == "Installing" or phase == "Updating" or phase == "Pending"
+           or phase == "Uninstalling" then
+          hs.status = "Progressing"
+          hs.message = "hub phase " .. phase
+          return hs
+        end
+
+        -- FAIL OPEN on anything unrecognised. This check exists to make waves
+        -- 10 and 15 wait for ACM's Policy CRDs, which is an optimisation. A
+        -- phase name this script does not know must not stall the bootstrap
+        -- forever - before these checks existed those waves converged on
+        -- Argo CD's retry, and that is the behaviour to fall back to.
+        hs.status = "Healthy"
+        hs.message = "not gating: unrecognised phase " ..
+          (phase and ("'" .. phase .. "'") or "(absent)") ..
+          " - check the hub by hand"
         return hs
     - group: datasciencecluster.opendatahub.io
       kind: DataScienceCluster
       check: |
         local hs = {}
+
         if obj.status == nil then
           hs.status = "Progressing"
           hs.message = "waiting for RHOAI to start reconciling"
           return hs
         end
+
+        -- `.status.phase` is the documented signal: "Ready" means every
+        -- enabled component reconciled, which is when KServe has registered
+        -- InferenceService and ServingRuntime. The per-component conditions
+        -- are named individually (ModelControllerReady, KserveReady, ...) and
+        -- the set varies by RHOAI version, so they are not reliable to match
+        -- on - an earlier version of this check looked for a generic
+        -- "Available" condition that does not exist.
+        local phase = obj.status.phase
+
+        if phase == "Ready" then
+          hs.status = "Healthy"
+          hs.message = "all enabled components reconciled"
+          return hs
+        end
+        if phase == "Error" or phase == "Failed" then
+          hs.status = "Degraded"
+          hs.message = "reconcile failed - oc describe datasciencecluster"
+          return hs
+        end
+        if phase == "Progressing" or phase == "Installing" or phase == "Deleting" then
+          hs.status = "Progressing"
+          hs.message = "reconciling components (" .. phase .. ")"
+          return hs
+        end
+
+        -- An explicit failure in any condition is still worth surfacing, even
+        -- when the phase is unfamiliar.
         if obj.status.conditions ~= nil then
           for _, c in ipairs(obj.status.conditions) do
-            if c.type == "Available" and c.status == "True" then
-              hs.status = "Healthy"
-              hs.message = "components available"
-              return hs
-            end
             if c.type == "ReconcileComplete" and c.status == "False" then
               hs.status = "Degraded"
-              hs.message = "reconcile failed: " .. (c.message or "check the DSC status")
+              hs.message = "reconcile incomplete: " ..
+                (c.message or "oc describe datasciencecluster")
               return hs
             end
           end
         end
-        if obj.status.phase == "Ready" then
-          hs.status = "Healthy"
-          hs.message = "ready"
-          return hs
-        end
-        hs.status = "Progressing"
-        hs.message = "reconciling components" ..
-          (obj.status.phase and (" (" .. obj.status.phase .. ")") or "")
+
+        -- FAIL OPEN, for the same reason as the hub above: this gate is an
+        -- optimisation and must never be the thing that hangs a bootstrap.
+        hs.status = "Healthy"
+        hs.message = "not gating: unrecognised phase " ..
+          (phase and ("'" .. phase .. "'") or "(absent)") ..
+          " - check KServe CRDs by hand"
         return hs

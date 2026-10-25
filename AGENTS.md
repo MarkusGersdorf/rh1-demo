@@ -367,6 +367,22 @@ exists". The ones that bite here:
 
 `bootstrap.sh` installs Argo CD health checks for `Subscription`,
 `MultiClusterHub` and `DataScienceCluster` so sync waves gate on all three.
+The chain that makes this work: a resource's health rolls up into its
+Application's `.status.health`, Argo CD's built-in `argoproj.io/Application`
+health check reads that, and the root app-of-apps gates its waves on the
+Application objects' health.
+
+**Those checks fail open, deliberately.** They enumerate the phases they know
+and report Healthy with a "not gating" message for anything else. A gate that
+cannot interpret a status would otherwise sit on Progressing forever and
+deadlock waves 10 and 15 — strictly worse than the retry-based convergence it
+replaced. Gating is an optimisation; a hang is a regression. If you add a
+check, enumerate and fail open, and extend `scripts/test-health-checks.sh`.
+
+`DataScienceCluster` gates on `.status.phase == "Ready"`, not on conditions:
+the per-component conditions are named individually (`ModelControllerReady`,
+`KserveReady`, …) and the set varies by RHOAI version. An earlier version of
+this check looked for a generic `Available` condition that does not exist.
 There is deliberately no gate for `TektonConfig`: the Pipelines CSV lands in
 wave -5 and the Tekton manifests in wave 10, with waves 0 and 5 — a
 `MultiClusterHub` reaching Running and a `DataScienceCluster` reaching
