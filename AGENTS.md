@@ -285,7 +285,7 @@ the kustomization.
 ### GitOps
 
 App-of-apps. Two things applied by hand (`gitops/bootstrap/`), everything else
-reconciled. Sync waves: `-10` namespaces → `-5` subscriptions → `0` operator CRs
+reconciled. Sync waves: `-10` namespaces and groups → `-5` subscriptions → `0` operator CRs
 → `5` Gitea → `6` model fetch → `10` scanner+pipeline → `15` RHACM policies.
 Operator CRs are applied in the same pass as the operators defining their CRDs,
 so the first sync shows transient "no matches for kind" errors and converges on

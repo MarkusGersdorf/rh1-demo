@@ -144,7 +144,7 @@ Sync waves, for when you need to reason about ordering:
 
 | Wave | What |
 |---|---|
-| -10 | namespaces |
+| -10 | namespaces, groups |
 | -5 | operator subscriptions |
 | 0 | MultiClusterHub, Central, DataScienceCluster, Securesign, Backstage |
 | 5 | Gitea |

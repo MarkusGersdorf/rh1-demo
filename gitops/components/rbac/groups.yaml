@@ -1,0 +1,18 @@
+---
+# Created by hand in the console; brought under Argo CD so it is reconciled
+# rather than remembered. Membership is declared here now - adding a user in
+# the console is reverted by selfHeal, so edit this file instead.
+#
+# Note it grants nothing on its own. OpenShift's default `cluster-admins`
+# ClusterRoleBinding binds Group/system:cluster-admins, not this group, and on
+# this cluster the admin user's cluster-admin comes from its own
+# keycloak-sso-user:admin:cluster-admin binding. If membership of this group
+# should mean something, add the ClusterRoleBinding alongside it here.
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: cluster-admins
+  labels:
+    lightwell-inward.redhat.com/demo: "true"
+users:
+  - admin
