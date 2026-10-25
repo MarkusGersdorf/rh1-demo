@@ -22,6 +22,11 @@ spec:
     git:
       uri: https://github.com/MarkusGersdorf/rh1-demo.git
       ref: main
+    # The repo is private, so the clone needs credentials. Written by
+    # scripts/bootstrap.sh (before this BuildConfig's first sync) and
+    # refreshed by scripts/02-signing-setup.sh. Not in git: it holds a PAT.
+    sourceSecret:
+      name: github-source
     contextDir: components/ai-code-review
   strategy:
     type: Docker

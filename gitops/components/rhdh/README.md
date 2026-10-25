@@ -18,6 +18,16 @@ touching the cluster — but it also means **RHDH needs egress to GitHub**. On a
 disconnected cluster, push this repo to the in-cluster Gitea instead and point
 `catalog.locations` at `https://gitea-gitea.apps.<domain>/demo/rh1-demo/raw/branch/main/...`.
 
+**The repo is private, so it also needs a token.** `integrations.github`
+supplies one via `${GITHUB_TOKEN}`, which comes from the `rhdh-secrets` secret
+written by `scripts/02-signing-setup.sh`. Without it the catalog silently stays
+empty — Backstage logs the 404 and carries on, so the symptom is a Developer
+Hub with no components rather than an error on screen. Check it with:
+
+```sh
+oc -n rhdh logs deploy/backstage-rhdh | grep -i 'catalog.*raw.githubusercontent'
+```
+
 ## The template needs a Gitea scaffolder action
 
 `template-quarkus.yaml` uses `publish:gitea`. Whether that action is

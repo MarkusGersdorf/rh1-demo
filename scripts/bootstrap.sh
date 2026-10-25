@@ -26,6 +26,61 @@ wait_for "Argo CD application controller" 600 \
 step "Granting Argo CD the rights to install operators and cluster policy"
 oc apply -f "${ROOT}/gitops/bootstrap/02-argocd-cluster-admin.yaml"
 
+step "Repository credentials"
+# Asked for unconditionally, even if the repo is public. Three things fetch it
+# over https - Argo CD, the scanner BuildConfig, RHDH - and a conditional
+# credential means three code paths that only one of them exercises. A
+# read-only token also keeps RHDH's catalog refresh off GitHub's anonymous
+# rate limit, which is a stage risk worth spending one prompt on.
+if repo_is_public; then
+  info "$(repo_slug) is readable anonymously; the token is still used for RHDH"
+else
+  info "$(repo_slug) is not readable anonymously (private repo, or no egress)"
+fi
+TOKEN="$(github_token)"
+github_token_works "${TOKEN}" \
+  || die "that token cannot read $(repo_slug) - a fine-grained token needs Contents: read-only on this repo"
+
+# Written through a heredoc rather than --from-literal: the latter puts the
+# token in the process list for anyone with `ps` on this machine.
+oc apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${REPO_SECRET}
+  namespace: openshift-gitops
+  labels:
+    argocd.argoproj.io/secret-type: repository
+type: Opaque
+stringData:
+  type: git
+  url: $(yaml_str "$(repo_https_url)")
+  username: $(yaml_str "$(repo_owner)")
+  password: $(yaml_str "${TOKEN}")
+EOF
+ok "Argo CD credential stored in openshift-gitops/${REPO_SECRET}"
+
+# The BuildConfig lands at sync wave 10 with a ConfigChange trigger, so its
+# first build fires during this sync - before 02-signing-setup.sh runs. Put its
+# source secret in place now or that build fails on a clone it cannot
+# authenticate. The namespace is in git at wave -10; creating it early just
+# means Argo CD adopts it instead of creating it.
+oc get namespace lightwell-inward >/dev/null 2>&1 \
+  || oc create namespace lightwell-inward >/dev/null
+oc apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-source
+  namespace: lightwell-inward
+type: kubernetes.io/basic-auth
+stringData:
+  username: $(yaml_str "$(repo_owner)")
+  password: $(yaml_str "${TOKEN}")
+EOF
+ok "BuildConfig credential stored in lightwell-inward/github-source"
+info "RHDH's copy is written by scripts/02-signing-setup.sh, from this same secret"
+
 step "Applying the root application"
 oc apply -f "${ROOT}/gitops/bootstrap/03-root-application.yaml"
 

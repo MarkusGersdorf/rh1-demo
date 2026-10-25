@@ -15,7 +15,7 @@ spec:
     extraEnvs:
       secrets:
         # Created by scripts/02-signing-setup.sh: BACKEND_SECRET,
-        # GITEA_USERNAME, GITEA_PASSWORD.
+        # GITEA_USERNAME, GITEA_PASSWORD, GITHUB_TOKEN.
         - name: rhdh-secrets
     replicas: 1
     route:

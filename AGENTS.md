@@ -161,8 +161,8 @@ Order matters; see `docs/SETUP.md` for what each one waits on.
 ```sh
 ./scripts/00-prereqs.sh            # fails loudly on expensive-to-discover problems
 ./scripts/01-set-cluster-domain.sh # resolve placeholders, then COMMIT AND PUSH
-./scripts/bootstrap.sh             # GitOps operator + root app-of-apps
-./scripts/02-signing-setup.sh      # cosign keypair, RHDH secrets
+./scripts/bootstrap.sh             # GitOps operator + GitHub token + root app-of-apps
+./scripts/02-signing-setup.sh      # cosign keypair, GitHub token, RHDH secrets
 ./scripts/03-acs-init-bundle.sh    # RHACS SecuredCluster init bundle
 ./scripts/04-seed-gitea.sh         # repo, webhook, local clone at the base commit
 ./scripts/05-acs-policy.sh         # signature integration + policy check
@@ -173,6 +173,28 @@ Order matters; see `docs/SETUP.md` for what each one waits on.
 
 Stage flow: `demo-push-vulnerable.sh` → `demo-push-fix.sh` →
 `demo-rogue-deploy.sh` → `demo-deploy-signed.sh` → `demo-reset.sh`.
+
+### The repo is private, so three things need a token
+
+Argo CD, the scanner's `BuildConfig`, and RHDH all fetch this repo over HTTPS.
+GitHub answers an anonymous request for a private repo with **404**, so the
+failure reads as `authentication required: Repository not found` and looks
+like a wrong URL. It is not.
+
+`bootstrap.sh` prompts for a GitHub token (`Contents: read-only` is enough),
+validates it against the API before writing anything, and stores it in
+`openshift-gitops/lightwell-inward-repo` and `lightwell-inward/github-source`.
+`02-signing-setup.sh` reads it back out of the first secret — it only prompts
+if that is missing — and adds it to `rhdh-secrets` as `GITHUB_TOKEN`. Export
+`GITHUB_TOKEN` to skip the prompt. The resolution order and the URL
+normalisation live in `scripts/lib.sh` (`github_token`, `repo_https_url`).
+
+Argo CD matches repository secrets by URL string, so the secret's `url` must be
+the exact spelling the Applications use — https, with `.git`. That is what
+`repo_https_url` produces; do not "tidy" it.
+
+None of this is in git and none of it can be. If you add a fourth consumer,
+give it the same secret rather than a second token.
 
 ## Architecture
 

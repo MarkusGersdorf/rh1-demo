@@ -80,6 +80,31 @@ if oc get secret -n openshift-config pull-secret >/dev/null 2>&1; then
   fi
 fi
 
+step "Repository access"
+# Argo CD, the scanner BuildConfig and RHDH all fetch this repo over https.
+# A private repo answers anonymous clients with 404, which Argo CD surfaces an
+# hour later as "Repository not found" - find out here instead.
+SLUG="$(repo_slug)"
+info "origin ${SLUG}"
+PUBLIC=0; repo_is_public && PUBLIC=1
+if (( PUBLIC )); then
+  ok "readable anonymously"
+else
+  info "not readable anonymously - private repo, so a GitHub token is required"
+fi
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  if github_token_works "${GITHUB_TOKEN}"; then
+    ok "GITHUB_TOKEN reads ${SLUG}"
+  else
+    printf '%sfail%s GITHUB_TOKEN cannot read %s - a fine-grained token needs Contents: read-only\n' \
+      "${RED}" "${RST}" "${SLUG}"
+    FAIL=1
+  fi
+elif (( ! PUBLIC )); then
+  warn "no GITHUB_TOKEN set - scripts/bootstrap.sh will prompt for one."
+  warn "Export it to run unattended: export GITHUB_TOKEN=github_pat_..."
+fi
+
 step "Hugging Face token"
 if oc get secret -n lightwell-inward huggingface-token >/dev/null 2>&1; then
   ok "huggingface-token present"

@@ -28,6 +28,31 @@ only the live-inference aside. Stage A is small enough to leave running.
 `oc`, `git`, `jq`, `curl`, `cosign`, and optionally `tkn` (much nicer pipeline
 logs).
 
+**A GitHub token is required**, because this repo is private. Three things
+fetch it over HTTPS and none of them can do that anonymously:
+
+| Consumer | What it reads |
+|---|---|
+| Argo CD | every Application's `repoURL` |
+| scanner `BuildConfig` | `components/ai-code-review` at build time |
+| RHDH | the catalog, from `raw.githubusercontent.com` |
+
+A fine-grained token needs nothing but **Contents: read-only** on this one
+repo. `scripts/bootstrap.sh` prompts for it, validates it against the GitHub
+API before writing anything, and stores it; later scripts read it back rather
+than asking again. To run unattended, export it instead:
+
+```sh
+export GITHUB_TOKEN=github_pat_...
+```
+
+The scripts ask for it even if you make your fork public — RHDH's catalog
+refresh otherwise runs into GitHub's anonymous rate limit, which is not a thing
+you want to debug on the day.
+
+To rotate: re-run `bootstrap.sh` and `02-signing-setup.sh`. Both are
+idempotent and between them they rewrite all three copies.
+
 **A Hugging Face token is mandatory, not optional.** Both models are gated:
 `Foundation-Sec-8B-Reasoning` is a Llama 3.1 derivative, and `fdtn-ai/antares-1b`
 is behind its own licence click-through. For Antares there is no token-free
@@ -97,8 +122,17 @@ renders fine when you are signed in.
 oc get applications -n openshift-gitops -w
 ```
 
-Installs the GitOps operator, grants Argo CD cluster-admin, applies the root
-app-of-apps. Everything else follows from git.
+Installs the GitOps operator, grants Argo CD cluster-admin, **prompts for the
+GitHub token**, applies the root app-of-apps. Everything else follows from git.
+
+The token prompt comes before the root Application on purpose: Argo CD caches
+a failed repo fetch, so an app-of-apps applied without a credential sits on
+`ComparisonError: authentication required: Repository not found` rather than
+picking the secret up a minute later. It writes two secrets —
+`openshift-gitops/lightwell-inward-repo` for Argo CD, and
+`lightwell-inward/github-source` for the scanner's BuildConfig, which fires its
+first build at wave 10 during this same sync. RHDH's copy comes later, in
+step 3.
 
 **Expect 30-60 minutes and expect red in the Argo CD UI while it converges.**
 Operator CRs are applied in the same pass as the operators that define their
@@ -121,9 +155,16 @@ Sync waves, for when you need to reason about ordering:
 ### 3. Secrets (the parts that cannot be GitOps)
 
 ```sh
-./scripts/02-signing-setup.sh     # cosign keypair, RHDH secrets
+./scripts/02-signing-setup.sh     # cosign keypair, GitHub token, RHDH secrets
 ./scripts/03-acs-init-bundle.sh   # RHACS SecuredCluster init bundle
 ```
+
+`02` re-reads the token from the secret `bootstrap.sh` wrote, re-checks it
+still works, and puts it in `rhdh-secrets` as `GITHUB_TOKEN` — which is what
+`integrations.github` in `app-config.yaml` resolves. It rewrites that secret
+whole rather than patching, preserving the existing `BACKEND_SECRET` (rotating
+it logs every RHDH session out) and `GITEA_PASSWORD` (it would drift from
+`04-seed-gitea.sh`).
 
 `03` waits for Central, which takes a while on first boot. If the
 `SecuredCluster` CR shows degraded before you run this, that is expected — it

@@ -33,6 +33,12 @@ data:
           dangerouslyAllowOutsideDevelopment: true
 
     integrations:
+      # catalog.locations below is a raw.githubusercontent.com URL, which the
+      # repo being private makes unreadable without this. GITHUB_TOKEN comes
+      # from rhdh-secrets, written by scripts/02-signing-setup.sh.
+      github:
+        - host: github.com
+          token: ${GITHUB_TOKEN}
       gitea:
         - host: gitea-gitea.apps.ocp.xv426.sandbox519.opentlc.com
           baseUrl: https://gitea-gitea.apps.ocp.xv426.sandbox519.opentlc.com
