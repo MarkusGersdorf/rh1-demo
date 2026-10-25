@@ -54,10 +54,13 @@ fi
 # as unresolved work.
 PATTERNS=(-e 'apps\.CLUSTER_DOMAIN' -e 'CHANGEME/rh1-demo')
 
+# "no match" is the expected answer once a file is resolved, but grep says so
+# with exit 1 and errexit takes that out of the command substitution as a
+# silent abort. Swallow it: emptiness is handled by the caller.
 placeholder_files() {
   {
-    grep -rl "${PATTERNS[@]}" --include='*.yaml' gitops 2>/dev/null
-    grep -l  "${PATTERNS[@]}" README.md 2>/dev/null
+    grep -rl "${PATTERNS[@]}" --include='*.yaml' gitops 2>/dev/null || true
+    grep -l  "${PATTERNS[@]}" README.md 2>/dev/null || true
   } | sort -u
 }
 

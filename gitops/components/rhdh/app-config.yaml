@@ -10,12 +10,12 @@ data:
   app-config.yaml: |
     app:
       title: Red Hat Developer Hub - Lightwell Inward
-      baseUrl: https://rhdh-rhdh.apps.CLUSTER_DOMAIN
+      baseUrl: https://rhdh-rhdh.apps.ocp.xv426.sandbox519.opentlc.com
 
     backend:
-      baseUrl: https://rhdh-rhdh.apps.CLUSTER_DOMAIN
+      baseUrl: https://rhdh-rhdh.apps.ocp.xv426.sandbox519.opentlc.com
       cors:
-        origin: https://rhdh-rhdh.apps.CLUSTER_DOMAIN
+        origin: https://rhdh-rhdh.apps.ocp.xv426.sandbox519.opentlc.com
       auth:
         externalAccess:
           - type: legacy
@@ -34,8 +34,8 @@ data:
 
     integrations:
       gitea:
-        - host: gitea-gitea.apps.CLUSTER_DOMAIN
-          baseUrl: https://gitea-gitea.apps.CLUSTER_DOMAIN
+        - host: gitea-gitea.apps.ocp.xv426.sandbox519.opentlc.com
+          baseUrl: https://gitea-gitea.apps.ocp.xv426.sandbox519.opentlc.com
           username: ${GITEA_USERNAME}
           password: ${GITEA_PASSWORD}
 

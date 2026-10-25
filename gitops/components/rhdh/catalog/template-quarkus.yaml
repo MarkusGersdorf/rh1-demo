@@ -63,7 +63,7 @@ spec:
       name: Publish to Gitea
       action: publish:gitea
       input:
-        repoUrl: 'gitea-gitea.apps.CLUSTER_DOMAIN?owner=demo&repo=${{ parameters.name }}'
+        repoUrl: 'gitea-gitea.apps.ocp.xv426.sandbox519.opentlc.com?owner=demo&repo=${{ parameters.name }}'
         description: ${{ parameters.description }}
         defaultBranch: main
 
