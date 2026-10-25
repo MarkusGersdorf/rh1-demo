@@ -1,0 +1,134 @@
+---
+# Merge patch for the ArgoCD CR the GitOps operator creates.
+#
+# THE PROBLEM THIS SOLVES
+#
+# A Subscription becomes Synced and Healthy the instant it exists. OLM then
+# takes minutes to resolve it, install the CSV and register CRDs. Argo CD does
+# not know to wait, so sync wave -5 "finished" immediately and wave 0 tried to
+# create MultiClusterHub, Central, DataScienceCluster and Securesign before
+# their CRDs existed. Sync waves cannot order what they cannot see.
+#
+# Worse, a Subscription that can never resolve - a channel absent from this
+# cluster's catalog, which is exactly what release-2.15 was on OCP 4.22 - also
+# reported Healthy. The failure was invisible at the only layer looking.
+#
+# With this health check a Subscription is Healthy only once a CSV is actually
+# installed, so the waves gate properly, and a resolution failure shows up as
+# Degraded with OLM's own message instead of a silent hang.
+#
+# Applied by scripts/bootstrap.sh BEFORE the root Application, because it has
+# to be in place for the very first sync.
+spec:
+  resourceHealthChecks:
+    - group: operators.coreos.com
+      kind: Subscription
+      check: |
+        local hs = {}
+
+        if obj.status == nil then
+          hs.status = "Progressing"
+          hs.message = "waiting for OLM to pick up the subscription"
+          return hs
+        end
+
+        -- A channel or package that does not exist on this cluster surfaces
+        -- here. Report it loudly: the alternative is a wave that hangs with no
+        -- explanation anywhere in the UI.
+        if obj.status.conditions ~= nil then
+          for _, c in ipairs(obj.status.conditions) do
+            if c.type == "ResolutionFailed" and c.status == "True" then
+              hs.status = "Degraded"
+              hs.message = "cannot resolve: " .. (c.message or "see the subscription status")
+              return hs
+            end
+          end
+          -- Catalog sources flap during cluster bring-up, so this is
+          -- Progressing rather than Degraded; it would otherwise fail syncs
+          -- that go on to succeed.
+          for _, c in ipairs(obj.status.conditions) do
+            if c.type == "CatalogSourcesUnhealthy" and c.status == "True" then
+              hs.status = "Progressing"
+              hs.message = "catalog not ready: " .. (c.message or "waiting")
+              return hs
+            end
+          end
+        end
+
+        if obj.status.installedCSV ~= nil and obj.status.installedCSV ~= "" then
+          hs.status = "Healthy"
+          hs.message = obj.status.installedCSV .. " installed"
+          return hs
+        end
+
+        hs.status = "Progressing"
+        hs.message = "installing " .. (obj.status.currentCSV or "the operator")
+        return hs
+
+    # SECOND-ORDER CRDs
+    #
+    # Some kinds this repo uses are not registered by an operator at all - they
+    # arrive when an operator's own CR reconciles:
+    #
+    #   DataScienceCluster -> KServe -> InferenceService, ServingRuntime
+    #   MultiClusterHub    -> ACM    -> Policy, Placement, PlacementBinding
+    #
+    # Those CRs sit in wave 0 while the Applications needing their CRDs sit in
+    # waves 10 and 15, so Application-level waves will order them correctly -
+    # but only if wave 0 reports Progressing until the CR has actually
+    # reconciled. By default both report Healthy as soon as they are accepted.
+    - group: operator.open-cluster-management.io
+      kind: MultiClusterHub
+      check: |
+        local hs = {}
+        if obj.status == nil or obj.status.phase == nil then
+          hs.status = "Progressing"
+          hs.message = "waiting for the hub to start installing"
+          return hs
+        end
+        if obj.status.phase == "Running" then
+          hs.status = "Healthy"
+          hs.message = "hub running" .. (obj.status.currentVersion
+            and (" (" .. obj.status.currentVersion .. ")") or "")
+          return hs
+        end
+        if obj.status.phase == "Error" then
+          hs.status = "Degraded"
+          hs.message = "hub install failed - check the multiclusterhub status"
+          return hs
+        end
+        hs.status = "Progressing"
+        hs.message = "hub phase " .. obj.status.phase
+        return hs
+    - group: datasciencecluster.opendatahub.io
+      kind: DataScienceCluster
+      check: |
+        local hs = {}
+        if obj.status == nil then
+          hs.status = "Progressing"
+          hs.message = "waiting for RHOAI to start reconciling"
+          return hs
+        end
+        if obj.status.conditions ~= nil then
+          for _, c in ipairs(obj.status.conditions) do
+            if c.type == "Available" and c.status == "True" then
+              hs.status = "Healthy"
+              hs.message = "components available"
+              return hs
+            end
+            if c.type == "ReconcileComplete" and c.status == "False" then
+              hs.status = "Degraded"
+              hs.message = "reconcile failed: " .. (c.message or "check the DSC status")
+              return hs
+            end
+          end
+        end
+        if obj.status.phase == "Ready" then
+          hs.status = "Healthy"
+          hs.message = "ready"
+          return hs
+        end
+        hs.status = "Progressing"
+        hs.message = "reconciling components" ..
+          (obj.status.phase and (" (" .. obj.status.phase .. ")") or "")
+        return hs

@@ -134,11 +134,32 @@ picking the secret up a minute later. It writes two secrets —
 first build at wave 10 during this same sync. RHDH's copy comes later, in
 step 3.
 
-**Expect 30-60 minutes and expect red in the Argo CD UI while it converges.**
-Operator CRs are applied in the same pass as the operators that define their
-CRDs, so the first few attempts fail with "no matches for kind". Argo retries
-with backoff (20 Applications' worth of retry config) and it resolves. Do not
-start hand-applying things.
+**Expect 30-60 minutes.** Some red in the Argo CD UI during bring-up is
+normal — operator CRs are applied in the same pass as the operators defining
+their CRDs, and Argo CD retries with backoff.
+
+What is *not* normal, and what to check first if an Application stays stuck:
+
+```sh
+./scripts/diagnose-sync.sh
+```
+
+It answers the three questions that actually matter — which channels this
+cluster's catalog offers, whether each operator installed or is stuck
+resolving, and which needed CRDs are missing and who was supposed to supply
+them.
+
+Two failures look identical in the UI and are not:
+
+- **A Subscription that cannot resolve.** A channel absent from this cluster's
+  catalog leaves it on `ResolutionFailed` forever. `bootstrap.sh` installs an
+  Argo CD health check that reports this as Degraded with OLM's own message;
+  without that patch it reports *Healthy* and the wave silently never
+  delivers its CRDs. This is why no Subscription in this repo pins a channel.
+- **A second-order CRD.** `InferenceService` and `ServingRuntime` arrive only
+  when the `DataScienceCluster` reconciles; `Policy` and `Placement` only when
+  the `MultiClusterHub` does. Health checks for both CRs are installed too, so
+  waves 10 and 15 wait for them rather than failing on missing kinds.
 
 Sync waves, for when you need to reason about ordering:
 

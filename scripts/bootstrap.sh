@@ -26,6 +26,19 @@ wait_for "Argo CD application controller" 600 \
 step "Granting Argo CD the rights to install operators and cluster policy"
 oc apply -f "${ROOT}/gitops/bootstrap/02-argocd-cluster-admin.yaml"
 
+step "Teaching Argo CD when an operator is actually installed"
+# Without this a Subscription reads Healthy the moment it exists, so the sync
+# wave that installs operators completes before any CRD is registered and the
+# next wave fails on missing kinds. See the file header for the full story.
+wait_for "the ArgoCD CR" 300 oc get argocd openshift-gitops -n openshift-gitops
+oc patch argocd openshift-gitops -n openshift-gitops --type merge \
+  --patch-file "${ROOT}/gitops/bootstrap/04-argocd-subscription-health.yaml"
+# The repo-server and application-controller reload the health checks from the
+# ArgoCD CR; give the operator a moment to roll them out before syncing.
+oc rollout status statefulset/openshift-gitops-application-controller \
+  -n openshift-gitops --timeout=300s >/dev/null 2>&1 || true
+ok "Subscription health check installed"
+
 step "Repository credentials"
 # Asked for unconditionally, even if the repo is public. Three things fetch it
 # over https - Argo CD, the scanner BuildConfig, RHDH - and a conditional

@@ -1,4 +1,24 @@
 ---
+# NO `spec.channel` ANYWHERE IN THIS FILE, DELIBERATELY.
+#
+# Omitting it makes OLM use the package's own defaultChannel from the catalog
+# on *this* cluster. Hardcoding channels here was wrong twice over: the names
+# differ per OCP version, and a channel that does not exist produces a
+# Subscription stuck on ResolutionFailed, which Argo CD reported as Synced and
+# which then silently starved every later sync wave of its CRDs.
+#
+# Concretely: this file previously pinned advanced-cluster-management to
+# release-2.15, which is not offered on OCP 4.22 - that catalog carries
+# release-2.16 and release-2.17.
+#
+# To pin deliberately, first ask the cluster what exists:
+#
+#   oc get packagemanifest <name> -n openshift-marketplace \
+#     -o jsonpath='{.status.defaultChannel}{"  "}{range .status.channels[*]}{.name}{" "}{end}'
+#
+# then add `channel:` back for that one Subscription only, and expect to
+# revisit it on the next OCP minor.
+
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
@@ -15,7 +35,6 @@ metadata:
   name: advanced-cluster-management
   namespace: open-cluster-management
 spec:
-  channel: release-2.15
   installPlanApproval: Automatic
   name: advanced-cluster-management
   source: redhat-operators
@@ -35,7 +54,6 @@ metadata:
   name: rhacs-operator
   namespace: rhacs-operator
 spec:
-  channel: stable
   installPlanApproval: Automatic
   name: rhacs-operator
   source: redhat-operators
@@ -55,7 +73,6 @@ metadata:
   name: rhods-operator
   namespace: redhat-ods-operator
 spec:
-  channel: stable
   installPlanApproval: Automatic
   name: rhods-operator
   source: redhat-operators
@@ -68,7 +85,6 @@ metadata:
   name: openshift-pipelines-operator-rh
   namespace: openshift-operators
 spec:
-  channel: latest
   installPlanApproval: Automatic
   name: openshift-pipelines-operator-rh
   source: redhat-operators
@@ -88,7 +104,6 @@ metadata:
   name: rhtas-operator
   namespace: trusted-artifact-signer
 spec:
-  channel: stable
   installPlanApproval: Automatic
   name: rhtas-operator
   source: redhat-operators
@@ -108,7 +123,6 @@ metadata:
   name: rhdh
   namespace: rhdh-operator
 spec:
-  channel: fast
   installPlanApproval: Automatic
   name: rhdh
   source: redhat-operators
