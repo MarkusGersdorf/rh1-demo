@@ -1,6 +1,10 @@
 ---
 # Red Hat Trusted Artifact Signer - the Sigstore stack: Fulcio (certificates),
-# Rekor (transparency log), CTlog, TUF (trust root), TSA (timestamps).
+# Rekor (transparency log), CTlog, TUF (trust root). No TSA; see below.
+#
+# This is v1alpha1 deliberately. v1 is the storage version on RHTAS 1.5, but
+# it renames externalAccess to ingress on every component, so moving is a
+# rewrite rather than a version bump. v1alpha1 is still served.
 #
 # The demo signs with a cosign key but still uploads to this Rekor, so the
 # signature and the AI-review attestation are both in a real transparency log.
@@ -41,14 +45,28 @@ spec:
   ctlog:
     monitoring:
       enabled: false
+  # Spelled out even though every value here is the schema default. The CRD
+  # converts v1alpha1 to the v1 storage version through a webhook, and on
+  # RHTAS 1.5 that webhook emits nulls for these two when the block is absent
+  # - defaults are applied after conversion, not before. The apply then fails
+  # with "spec.trillian.database.create ... must be of type boolean: null",
+  # which reads like a manifest error and is not one.
+  trillian:
+    database:
+      create: true
+      pvc:
+        retain: true
+        size: 5Gi
   tuf:
     externalAccess:
       enabled: true
-  timestampAuthority:
-    externalAccess:
-      enabled: true
-    signer:
-      certificateChain:
-        certificateChainRef:
-          name: tsa-cert-chain
-          key: certificateChain
+  # No TSA. The demo signs with a cosign key and never passes
+  # --timestamp-server-url, so a timestamp authority buys nothing and costs
+  # the one piece of setup that reliably goes wrong: tsa.signer.certificateChain
+  # is required once the block exists, and pointing it at a secret nobody
+  # creates leaves Securesign pending forever.
+  #
+  # If you do add it back, the field is `tsa`. It is not `timestampAuthority`
+  # - that name is in no served version of this CRD, and server-side apply
+  # rejects it with ".spec.timestampAuthority: field not declared in schema",
+  # which fails the whole Application rather than just the field.

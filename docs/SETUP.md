@@ -394,10 +394,30 @@ fixed file — say "it's a search step, not the reviewer" and move on.
 
 ## Known rough edges
 
-**RHTAS timestamp authority** wants a `tsa-cert-chain` secret. The demo does
-not use timestamping; if `Securesign` hangs on it, delete the
-`timestampAuthority` block from `securesign.yaml` and commit.
-`02-signing-setup.sh` detects this and tells you.
+**RHTAS ships no timestamp authority here.** The demo signs with a cosign key
+and never passes `--timestamp-server-url`, so `securesign.yaml` omits the
+block rather than carrying a certificate chain that has to be created by hand.
+If you add it back the field is **`tsa`**, not `timestampAuthority` — the
+latter is in no served version of the CRD, and because this Application uses
+`ServerSideApply`, an undeclared field fails the whole Application with
+`field not declared in schema`, not just that one setting.
+`02-signing-setup.sh` still checks whether Securesign is stuck waiting on
+`tsa-cert-chain`.
+
+**`Securesign` stays on `v1alpha1`** even though `v1` is the storage version
+on RHTAS 1.5. `v1` is not a rename of one field — it drops
+`fulcio.certificate` and replaces `externalAccess` with `ingress` on every
+component, so moving is a rewrite. `v1alpha1` is still served and warns.
+Because the CRD converts through a webhook, `securesign.yaml` also spells out
+`trillian.database.create` and `pvc.retain`: the 1.5 webhook emits nulls for
+them when the block is absent, and the apply fails with `must be of type
+boolean: "null"`. Verify a change with a dry run before committing, since
+nothing offline catches this:
+
+```sh
+kubectl kustomize gitops/components/rhtas \
+  | oc apply --server-side --dry-run=server -f -
+```
 
 **RHACS `SecurityPolicy` CRD** only exists on recent RHACS. If
 `oc get crd securitypolicies.config.stackrox.io` is empty, `05-acs-policy.sh`

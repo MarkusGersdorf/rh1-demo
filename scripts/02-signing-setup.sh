@@ -96,9 +96,9 @@ fi
 step "RHTAS timestamp authority chain"
 if oc get securesign securesign -n trusted-artifact-signer -o jsonpath='{.status.conditions}' 2>/dev/null \
    | grep -qi 'tsa-cert-chain'; then
-  warn "Securesign is waiting on the tsa-cert-chain secret."
-  warn "The demo does not use timestamping. Simplest fix: remove the"
-  warn "timestampAuthority block from gitops/components/rhtas/securesign.yaml,"
+  warn "Securesign is waiting on the tsa-cert-chain secret - so something has"
+  warn "put a tsa block back into gitops/components/rhtas/securesign.yaml."
+  warn "The demo does not use timestamping. Simplest fix: remove it again,"
   warn "commit, and let Argo CD reconcile."
 else
   ok "no tsa-cert-chain complaint"
