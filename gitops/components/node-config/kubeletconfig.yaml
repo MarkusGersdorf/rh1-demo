@@ -1,0 +1,55 @@
+---
+# Raise the kubelet's pod ceiling on workers.
+#
+# OpenShift defaults to 250 pods per node. This demo installs RHACM, RHACS,
+# RHOAI, RHDH, Pipelines, Gitea and two model servers, which on a small
+# cluster saturates that.
+#
+# THE REAL CEILING IS YOUR POD CIDR, NOT THIS FILE.
+#
+# Each node gets one subnet from clusterNetwork, sized by `hostPrefix`, and a
+# pod needs an IP from it. hostPrefix is fixed at install time and cannot be
+# changed afterwards, so it caps maxPods no matter what is set here:
+#
+#   hostPrefix 22   ~1021 usable IPs   -> 500 (Red Hat's supported maximum)
+#   hostPrefix 23    ~509 usable IPs   -> 450 is the safe practical limit
+#   hostPrefix 24    ~253 usable IPs   -> already at the 250 default; adding
+#                                         nodes is the only way up
+#
+# Red Hat's guidance is hostPrefix 22 for a genuine 500 *user* pods, because
+# 10-15 system pods also take addresses.
+#
+# Check yours, and set maxPods below to match:
+#
+#   oc get network.config/cluster \
+#     -o jsonpath='{range .spec.clusterNetwork[*]}{.cidr}{" hostPrefix="}{.hostPrefix}{"\n"}{end}'
+#
+# scripts/00-node-max-pods.sh works it out, applies this, and waits for the
+# roll to finish.
+#
+# APPLYING THIS REBOOTS EVERY WORKER, one at a time, via the Machine Config
+# Operator. Do it BEFORE bootstrap.sh, not during a sync - a rolling reboot
+# mid-install restarts Argo CD itself and anything else in flight.
+#
+# Note `podsPerCore` is deliberately not set: when both are set the lower wins,
+# and on a CPU-light demo node podsPerCore would silently undo this.
+#
+# NOT IN THE APP-OF-APPS, deliberately. Every other component here is synced by
+# Argo CD, but a KubeletConfig reboots nodes - having a sync trigger that would
+# restart Argo CD itself mid-install, and selfHeal would re-trigger it on any
+# manual change. git stays the source of truth; the script applies it once,
+# before bootstrap, and waits for the roll to finish.
+apiVersion: machineconfiguration.openshift.io/v1
+kind: KubeletConfig
+metadata:
+  name: lightwell-inward-max-pods
+spec:
+  machineConfigPoolSelector:
+    matchLabels:
+      # Workers only. Raising this on control-plane nodes is a different
+      # decision and this demo does not need it.
+      pools.operator.machineconfiguration.openshift.io/worker: ""
+  kubeletConfig:
+    # Safe for the default hostPrefix 23. Raise to 500 only if your
+    # hostPrefix is 22 or lower.
+    maxPods: 450

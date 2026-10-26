@@ -175,6 +175,7 @@ Order matters; see `docs/SETUP.md` for what each one waits on.
 
 ```sh
 ./scripts/00-prereqs.sh            # fails loudly on expensive-to-discover problems
+./scripts/00-node-max-pods.sh      # only if hitting the 250 pods/node default; reboots workers
 ./scripts/01-set-cluster-domain.sh # resolve placeholders, then COMMIT AND PUSH
 ./scripts/bootstrap.sh             # GitOps operator + GitHub token + root app-of-apps
 ./scripts/02-signing-setup.sh      # cosign keypair, GitHub token, RHDH secrets

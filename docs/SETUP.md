@@ -89,6 +89,40 @@ It also prints each operator's default channel. Compare them against
 `gitops/components/operators/subscriptions.yaml` and correct that file if they
 differ — Argo CD will faithfully reconcile a wrong channel forever.
 
+### 0.5 Raise the pod ceiling, if you are hitting it
+
+OpenShift allows 250 pods per node by default. This demo installs RHACM,
+RHACS, RHOAI, RHDH, Pipelines, Gitea and two model servers, which saturates
+that on a small cluster — pods sit `Pending` with no node able to take them.
+
+```sh
+./scripts/00-node-max-pods.sh          # computes the ceiling, applies, waits
+DRY_RUN=1 ./scripts/00-node-max-pods.sh   # report only
+```
+
+**The ceiling is your pod CIDR, not a setting.** Each node gets one subnet
+sized by `clusterNetwork.hostPrefix`, every pod needs an address from it, and
+hostPrefix is fixed at install time:
+
+| hostPrefix | usable IPs/node | practical maxPods |
+|---|---|---|
+| 22 | ~1021 | **500** (Red Hat's supported maximum) |
+| 23 (default) | ~509 | **450** |
+| 24 or higher | ~253 | already at the default — **add nodes instead** |
+
+The script refuses to apply a ceiling at or below the 250 default, because
+that lowers capacity rather than raising it.
+
+**Run it before `bootstrap.sh`.** It reboots every worker one at a time via
+the Machine Config Operator; doing that during a sync restarts Argo CD and
+anything else in flight. For that reason the manifest
+(`gitops/components/node-config/`) is deliberately *not* in the app-of-apps —
+git holds it, the script applies it once.
+
+And consider whether raising it is the right fix at all: on a node already
+short of CPU or memory this trades "pod limit reached" for eviction churn,
+which is harder to debug. Adding a worker is usually better.
+
 ### 1. Resolve the placeholders
 
 ```sh
