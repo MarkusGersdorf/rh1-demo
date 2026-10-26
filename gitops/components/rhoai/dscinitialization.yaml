@@ -1,4 +1,21 @@
 ---
+# Also deliberately minimal.
+#
+# This previously set `serviceMesh: {managementState: Removed}`. Service Mesh
+# went away with Serverless in RHOAI 3.x, so there is nothing to disable and
+# the field may not be declared — which ServerSideApply rejects outright.
+# Omitting it is both correct and safer.
+#
+# DSCInitialization has v1 and v2. v1 is used here as the safer common
+# denominator; confirm with:
+#
+#   oc get crd dscinitializations.dscinitialization.opendatahub.io \
+#     -o jsonpath='{range .spec.versions[*]}{.name}{" served="}{.served}{"\n"}{end}'
+#   oc explain dscinitialization.spec
+#
+# Note some RHOAI versions create a DSCInitialization themselves. If yours
+# does, this one is redundant rather than harmful — but check for a duplicate
+# with a different name before debugging anything odd.
 apiVersion: dscinitialization.opendatahub.io/v1
 kind: DSCInitialization
 metadata:
@@ -7,9 +24,3 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   applicationsNamespace: redhat-ods-applications
-  monitoring:
-    managementState: Managed
-    namespace: redhat-ods-monitoring
-  # Service Mesh is NOT required because KServe runs in RawDeployment mode.
-  serviceMesh:
-    managementState: Removed

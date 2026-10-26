@@ -20,7 +20,7 @@ To see what this cluster actually offers, and whether an operator installed:
 To pin a channel on purpose, read that output first, then add `channel:` back
 for that one Subscription — and expect to revisit it on the next OCP minor.
 
-Note: KServe runs in **RawDeployment** mode in this demo, which deliberately avoids
-installing OpenShift Serverless and Service Mesh. That is a large reduction in
-moving parts for a CPU-only single-cluster demo. If you later want Serverless
-model serving (autoscale-to-zero, traffic splitting), those two operators come back.
+Note: KServe runs in **RawDeployment** mode, which in RHOAI 3.x is the only
+mode — OpenShift Serverless and Service Mesh are retired, so neither operator
+is needed and there is nothing to opt out of. That is why neither appears in
+`subscriptions.yaml`.

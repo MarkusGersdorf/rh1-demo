@@ -281,8 +281,9 @@ demo — everything else is plumbing to get a model's opinion into that structur
 ### Model serving
 
 Two InferenceServices, both llama.cpp on CPU via KServe in **RawDeployment**
-mode, which deliberately avoids installing OpenShift Serverless and Service
-Mesh:
+mode — which in RHOAI 3.x is the *only* mode. Serverless and Service Mesh are
+retired, so there is nothing to opt out of; earlier wording here framed
+RawDeployment as a deliberate simplification, which it no longer is:
 
 | InferenceService | Model | Precision | Requests |
 |---|---|---|---|
@@ -293,6 +294,24 @@ Antares needs F16, not the BF16 the upstream POC builds for Apple Metal — its
 launcher selects precision by device and CPU mode wants F16. Its CLI drives
 `/v1/completions`, not the chat API (`use_completions_api: true` in the model
 spec); llama-server serves both, so do not "fix" the endpoint.
+
+**The DataScienceCluster API has no v1, and `kserve.defaultDeploymentMode` and
+`kserve.serving` do not exist.** Only v2 and v3 are served, Serverless is
+retired, and several component names changed: `modelmeshserving` and
+`codeflare` are gone, `datasciencepipelines` is now `aipipelines`, and
+`modelregistry`/`feastoperator`/`trainingoperator` are v2-only. Argo CD syncs
+with ServerSideApply, which *rejects* undeclared fields rather than pruning
+them, so each one is a hard sync failure. Both RHOAI CRs are therefore kept
+minimal — declare only what the demo uses; omitted components default to
+Removed. Ask the cluster before editing them:
+
+```sh
+oc explain datasciencecluster.spec.components.kserve
+oc get crd datascienceclusters.datasciencecluster.opendatahub.io \
+  -o jsonpath='{range .spec.versions[*]}{.name}{" served="}{.served}{"\n"}{end}'
+```
+
+`./scripts/diagnose-sync.sh` prints both.
 
 The GPU path for Stage B (`servingruntime-vllm-gpu.yaml`) ships but is not in
 the kustomization.

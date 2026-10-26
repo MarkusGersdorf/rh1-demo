@@ -1,8 +1,42 @@
 ---
-# Trimmed to what the demo needs. Dashboard stays on so you can show the model
-# in the RHOAI UI during the walkthrough; everything not needed is Removed to
-# keep a CPU-only cluster responsive.
-apiVersion: datasciencecluster.opendatahub.io/v1
+# DELIBERATELY MINIMAL. Declare only what the demo uses; omitted components
+# default to Removed.
+#
+# This file previously set twelve components and was wrong five ways, because
+# the DataScienceCluster API changed under it. There is **no v1** — only v2 and
+# v3 — and across those:
+#
+#   modelmeshserving      retired, does not exist
+#   codeflare             retired, does not exist
+#   datasciencepipelines  renamed to aipipelines
+#   trainingoperator      v2-only (deprecated), replaced by trainer in v3
+#   modelregistry         v2-only; nested under aiHub in v3
+#   feastoperator         v2-only; nested under data in v3
+#
+# and on kserve itself:
+#
+#   defaultDeploymentMode REMOVED. Serverless is retired in RHOAI 3.x, so
+#                         RawDeployment is the only mode and the field is moot.
+#                         The InferenceServices also carry the
+#                         serving.kserve.io/deploymentMode annotation.
+#   serving               REMOVED, for the same reason — there is no Knative
+#                         serving stack to point at any more.
+#
+# Argo CD syncs with ServerSideApply, which rejects undeclared fields rather
+# than silently pruning them, so each one is a hard failure.
+#
+# ASK THE CLUSTER before editing this, rather than trusting this comment:
+#
+#   oc get crd datascienceclusters.datasciencecluster.opendatahub.io \
+#     -o jsonpath='{range .spec.versions[*]}{.name}{" served="}{.served}{" storage="}{.storage}{"\n"}{end}'
+#   oc explain datasciencecluster.spec.components.kserve
+#
+# scripts/00-prereqs.sh prints both.
+#
+# v2 is used here because current operators serve v2 and v3, making it the
+# safer common denominator. Switch to v3 if your cluster only serves v3; the
+# fields below are identical in both.
+apiVersion: datasciencecluster.opendatahub.io/v2
 kind: DataScienceCluster
 metadata:
   name: default-dsc
@@ -10,33 +44,12 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   components:
+    # Kept so the walkthrough can show the model in the RHOAI UI.
     dashboard:
       managementState: Managed
+    # The only component the demo actually needs: KServe serves both models.
+    # Headed gives the predictor a normal ClusterIP Service, which is what the
+    # scanner and the Antares CLI dial.
     kserve:
       managementState: Managed
-      # RawDeployment avoids the Serverless + Service Mesh dependency chain.
-      defaultDeploymentMode: RawDeployment
-      serving:
-        managementState: Removed
       rawDeploymentServiceConfig: Headed
-    modelregistry:
-      managementState: Managed
-      registriesNamespace: rhoai-model-registries
-    workbenches:
-      managementState: Managed
-    modelmeshserving:
-      managementState: Removed
-    datasciencepipelines:
-      managementState: Removed
-    kueue:
-      managementState: Removed
-    ray:
-      managementState: Removed
-    trainingoperator:
-      managementState: Removed
-    trustyai:
-      managementState: Removed
-    codeflare:
-      managementState: Removed
-    feastoperator:
-      managementState: Removed

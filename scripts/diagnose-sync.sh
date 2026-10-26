@@ -141,6 +141,50 @@ for item in "multiclusterhub:multiclusterhub:open-cluster-management:{.status.ph
 done
 
 # --------------------------------------------------------------------------
+step "API versions, and do the fields we set still exist?"
+# --------------------------------------------------------------------------
+# These CRDs change shape between releases. DataScienceCluster dropped v1 and
+# removed kserve.defaultDeploymentMode and kserve.serving when Serverless was
+# retired; several component names changed too. ServerSideApply rejects
+# undeclared fields outright, so drift here is a hard sync failure.
+for crd in datascienceclusters.datasciencecluster.opendatahub.io \
+           dscinitializations.dscinitialization.opendatahub.io \
+           multiclusterhubs.operator.open-cluster-management.io; do
+  short="${crd%%.*}"
+  if vers="$(oc get crd "${crd}" \
+      -o jsonpath='{range .spec.versions[*]}{.name}{"(served="}{.served}{",storage="}{.storage}{") "}{end}' 2>/dev/null)"; then
+    printf '  %-22s %s\n' "${short}" "${vers}"
+  else
+    printf '  %-22s %s\n' "${short}" "CRD not present yet"
+  fi
+done
+
+echo
+echo "  fields this repo sets on datasciencecluster.spec.components.kserve:"
+if oc explain datasciencecluster.spec.components.kserve >/dev/null 2>&1; then
+  declared="$(oc explain datasciencecluster.spec.components.kserve 2>/dev/null)"
+  for f in managementState rawDeploymentServiceConfig; do
+    if grep -qE "^\s+${f}" <<< "${declared}"; then
+      printf '    %s%-8s%s %s\n' "${GRN}" "ok" "${RST}" "${f}"
+    else
+      printf '    %s%-8s%s %s - NOT DECLARED, this sync will fail\n' "${RED}" "MISSING" "${RST}" "${f}"
+    fi
+  done
+  # Fields deliberately NOT set any more; flag if someone re-adds them.
+  for f in defaultDeploymentMode serving; do
+    if grep -qE "^\s+${f}" <<< "${declared}"; then
+      printf '    %-8s %s is declared here (unusual for 3.x) - fine either way, we omit it\n' "note" "${f}"
+    fi
+  done
+  echo
+  echo "    full field list:"
+  sed -n '/^FIELDS/,$p' <<< "${declared}" | grep -oE '^\s+[a-zA-Z]+' | tr -d ' ' \
+    | sort -u | paste -sd' ' - | fold -s -w 66 | sed 's/^/      /'
+else
+  echo "    (CRD not present yet - RHOAI operator has not installed)"
+fi
+
+# --------------------------------------------------------------------------
 step "Is the Subscription health check in place?"
 # --------------------------------------------------------------------------
 if oc get argocd openshift-gitops -n openshift-gitops \
