@@ -27,9 +27,10 @@ spec:
   accessModes:
     - ReadWriteOnce
   resources:
-    # 1B at F16 is ~2.5GB plus the source weights during conversion. A long
-    # way from the 80Gi the 8B model needed.
-    storage: 20Gi
+    requests:
+      # 1B at F16 is ~2.5GB plus the source weights during conversion. A long
+      # way from the 80Gi the 8B model needed.
+      storage: 20Gi
 ---
 apiVersion: v1
 kind: ConfigMap
