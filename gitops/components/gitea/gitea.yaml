@@ -59,6 +59,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/gitea
+            - name: config
+              mountPath: /etc/gitea
           resources:
             requests:
               cpu: "100m"
@@ -77,6 +79,8 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: gitea-data
+        - name: config
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
