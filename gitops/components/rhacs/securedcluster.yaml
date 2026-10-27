@@ -21,7 +21,17 @@ spec:
     # rejection is visible in `oc apply` output on stage.
     bypass: BreakGlassAnnotation
     contactImageScanners: ScanIfMissing
-    timeout: 20
+    # `timeoutSeconds`, not `timeout`. The Helm chart spells this one
+    # `admissionControl.timeout`; the operator CRD does not, and Argo CD syncs
+    # with ServerSideApply, which rejects an undeclared field outright rather
+    # than dropping it. Confirm against the cluster before editing:
+    #   oc explain securedcluster.spec.admissionControl
+    #
+    # Worth keeping explicit rather than defaulted: ScanIfMissing above means
+    # admission may wait on a first-time image scan, and an admission
+    # controller that times out lets the deploy through. The rogue-deploy act
+    # depends on it refusing.
+    timeoutSeconds: 20
   perNode:
     collector:
       collection: CORE_BPF
