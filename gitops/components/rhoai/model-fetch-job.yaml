@@ -117,6 +117,8 @@ spec:
                   optional: true
             - name: HF_HUB_ENABLE_HF_TRANSFER
               value: "0"
+            - name: HOME
+              value: /tmp
           resources:
             requests:
               cpu: "2"

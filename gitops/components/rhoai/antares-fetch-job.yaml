@@ -146,6 +146,8 @@ spec:
                   name: huggingface-token
                   key: token
                   optional: true
+            - name: HOME
+              value: /tmp
           resources:
             requests:
               cpu: "1"
