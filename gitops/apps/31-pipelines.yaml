@@ -28,3 +28,20 @@ spec:
         duration: 20s
         factor: 2
         maxDuration: 10m
+  # Tekton's webhook injects `computeResources: {}` into every step and sidecar
+  # it admits. It is a defaulted empty struct, not a value anyone set, so git
+  # can never match it - and with selfHeal on, a diff that never closes means
+  # Argo CD re-applies these Tasks forever. Declaring it in the manifests would
+  # mean writing an empty map onto 56 steps to appease a webhook, so ignore it
+  # here instead.
+  #
+  # The other two halves of this diff ARE declared in git: result `type: string`
+  # and the canonical `25m0s` duration spelling. Both are real fields with real
+  # values, so they belong in the manifest, not in this list.
+  ignoreDifferences:
+    - group: tekton.dev
+      kind: Task
+      jqPathExpressions:
+        - .spec.steps[].computeResources
+        - .spec.sidecars[].computeResources
+        - .spec.stepTemplate.computeResources

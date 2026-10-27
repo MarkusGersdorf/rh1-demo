@@ -23,8 +23,10 @@ spec:
     - name: source
   results:
     - name: commit
+      type: string
       description: Resolved SHA of the reviewed commit.
     - name: base-commit
+      type: string
       description: Resolved SHA of the comparison base.
   steps:
     - name: clone
@@ -76,7 +78,9 @@ spec:
     - name: source
   results:
     - name: verdict
+      type: string
     - name: summary
+      type: string
   steps:
     - name: verify
       image: registry.access.redhat.com/ubi9/python-312:latest
@@ -164,7 +168,9 @@ spec:
     - name: source
   results:
     - name: verdict
+      type: string
     - name: findings-count
+      type: string
   steps:
     - name: semgrep
       image: docker.io/semgrep/semgrep:latest
@@ -233,12 +239,14 @@ spec:
       description: PVC holding the Antares CLI extracted by the antares-fetch job.
   results:
     - name: findings-count
+      type: string
     - name: files-flagged
+      type: string
   steps:
     - name: sweep
       image: registry.access.redhat.com/ubi9/python-312:latest
       workingDir: $(workspaces.source.path)/repo
-      timeout: 25m
+      timeout: 25m0s
       env:
         - name: ANTARES_ENDPOINT
           value: $(params.endpoint)
@@ -352,14 +360,17 @@ spec:
     - name: source
   results:
     - name: verdict
+      type: string
     - name: findings-count
+      type: string
     - name: top-severity
+      type: string
   steps:
     - name: review
       image: registry.access.redhat.com/ubi9/python-312:latest
       workingDir: $(workspaces.source.path)/repo
       # Generous: CPU inference on an 8B reasoning model is minutes, not seconds.
-      timeout: 20m
+      timeout: 20m0s
       script: |
         #!/usr/bin/env python3
         """Collect the diff, ask the model, enforce the verdict."""
@@ -559,7 +570,9 @@ spec:
     - name: source
   results:
     - name: digest
+      type: string
     - name: image-ref
+      type: string
   steps:
     - name: buildah
       image: registry.redhat.io/rhel9/buildah:latest
@@ -616,6 +629,7 @@ spec:
     - name: source
   results:
     - name: rekor-log-index
+      type: string
   steps:
     - name: sign
       image: registry.redhat.io/rhtas/cosign-rhel9:latest
