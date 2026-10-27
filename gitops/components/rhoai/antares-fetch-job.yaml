@@ -91,7 +91,11 @@ data:
 
       mkdir -p "${CLI_ROOT}/pkg"
       python3 -m zipfile -e "${ZIP}" "${CLI_ROOT}/pkg"
-      python3 -m venv "${CLI_ROOT}/venv"
+      python3 -m venv "${CLI_ROOT}/venv" 2>/dev/null \
+        || python3 -m venv --without-pip "${CLI_ROOT}/venv"
+      if ! "${CLI_ROOT}/venv/bin/python3" -m pip --version >/dev/null 2>&1; then
+        curl -sSL https://bootstrap.pypa.io/get-pip.py | "${CLI_ROOT}/venv/bin/python3" -
+      fi
       "${CLI_ROOT}/venv/bin/pip" install --quiet --no-cache-dir "${CLI_ROOT}/pkg"/*.whl 2>/dev/null \
         || "${CLI_ROOT}/venv/bin/pip" install --quiet --no-cache-dir "${CLI_ROOT}/pkg"
       "${CLI_ROOT}/venv/bin/antares" --version || true
