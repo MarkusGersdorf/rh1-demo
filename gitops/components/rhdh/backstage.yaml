@@ -1,5 +1,22 @@
 ---
-apiVersion: rhdh.redhat.com/v1alpha3
+# v1alpha3 is NOT served by current RHDH operators. This cluster offers
+# v1alpha4 and v1alpha5 only, and an unserved version fails with "no matches
+# for kind Backstage" - which reads exactly like a missing CRD and is not one.
+#
+# v1alpha4 is chosen as the lower of the two served versions, the same
+# reasoning the DataScienceCluster uses for picking v2 over v3: the older
+# served version is the safer common denominator across operator releases,
+# and it is one step from v1alpha3, so the spec shape below is least likely
+# to have moved.
+#
+# ASK THE CLUSTER before changing this, rather than trusting this comment -
+# Argo CD syncs with ServerSideApply, which rejects a field the schema does
+# not declare instead of ignoring it:
+#
+#   oc get crd backstages.rhdh.redhat.com \
+#     -o jsonpath='{range .spec.versions[*]}{.name}{" served="}{.served}{" storage="}{.storage}{"\n"}{end}'
+#   oc explain backstage.spec.application
+apiVersion: rhdh.redhat.com/v1alpha4
 kind: Backstage
 metadata:
   name: rhdh
