@@ -28,3 +28,26 @@ spec:
         duration: 20s
         factor: 2
         maxDuration: 10m
+  # The Securesign CR is written as v1alpha1, but v1 is the storage version on
+  # RHTAS 1.5, so every read goes v1alpha1 -> conversion webhook -> v1 -> back.
+  # `rekor.rekorSearchUI.enabled` does not survive that round trip: git says
+  # `true`, the API server returns `null`, and no spelling in the manifest can
+  # change that - the value cannot be represented in the version the cluster
+  # stores. Same webhook, same cause as the nulls that forced
+  # `trillian.database` to be spelled out in securesign.yaml.
+  #
+  # So this diff can never close, and with selfHeal on it means re-applying
+  # the Securesign CR forever. Ignore the one field.
+  #
+  # NOTE: ignoring the diff does not prove the UI came up. If the webhook
+  # drops the value rather than just failing to report it, the Rekor Search UI
+  # never deploys and this would hide that. scripts/verify.sh already checks
+  # the rekor-search-ui route exists - that check is the real guard, and the
+  # demo uses the UI at tab 6.
+  ignoreDifferences:
+    - group: rhtas.redhat.com
+      kind: Securesign
+      name: securesign
+      namespace: trusted-artifact-signer
+      jsonPointers:
+        - /spec/rekor/rekorSearchUI/enabled
