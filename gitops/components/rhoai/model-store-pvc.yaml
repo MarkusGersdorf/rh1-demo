@@ -6,6 +6,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: model-store
   namespace: lightwell-inward
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
 spec:
   accessModes:
     - ReadWriteOnce

@@ -10,6 +10,7 @@ metadata:
     # and a scale-from-zero mid-demo is an unforced error.
     serving.kserve.io/autoscalerClass: external
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "7"
   labels:
     opendatahub.io/dashboard: "true"
     lightwell-inward.redhat.com/role: security-reviewer

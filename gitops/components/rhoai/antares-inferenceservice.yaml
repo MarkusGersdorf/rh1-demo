@@ -81,6 +81,7 @@ metadata:
     serving.kserve.io/deploymentMode: RawDeployment
     serving.kserve.io/autoscalerClass: external
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "7"
   labels:
     opendatahub.io/dashboard: "true"
     lightwell-inward.redhat.com/role: localizer

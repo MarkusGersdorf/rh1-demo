@@ -11,6 +11,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: antares-cli
   namespace: lightwell-inward
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
 spec:
   accessModes:
     - ReadWriteOnce
@@ -23,6 +25,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: antares-model
   namespace: lightwell-inward
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
 spec:
   accessModes:
     - ReadWriteOnce
