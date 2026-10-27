@@ -28,3 +28,25 @@ spec:
         duration: 20s
         factor: 2
         maxDuration: 10m
+  # The Deployment carries `image.openshift.io/triggers`, so OpenShift's image
+  # trigger controller rewrites the container image to the resolved digest the
+  # moment the BuildConfig pushes a new ai-code-review:latest. Git holds the
+  # bare tag `ai-code-review:latest`, which is what that annotation needs as a
+  # starting point and is NOT a pullable reference on its own - no registry
+  # host, no digest.
+  #
+  # So the two will never agree, and that is the design: git names the stream,
+  # the cluster resolves it. Without this, selfHeal writes the tag back over
+  # the digest, the trigger controller immediately re-resolves it, and the two
+  # controllers fight - each write rolling the pods. A scanner restarting in a
+  # loop takes the demo down at the ai-code-review task.
+  #
+  # Ignore the field rather than the whole Deployment: replicas, probes, env
+  # and the ConfigMap reference must still reconcile.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: ai-code-review
+      namespace: lightwell-inward
+      jqPathExpressions:
+        - .spec.template.spec.containers[].image
