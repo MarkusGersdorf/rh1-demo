@@ -34,7 +34,12 @@ spec:
         # Created by scripts/02-signing-setup.sh: BACKEND_SECRET,
         # GITEA_USERNAME, GITEA_PASSWORD, GITHUB_TOKEN.
         - name: rhdh-secrets
-    replicas: 1
+    # No `replicas` here on purpose. It does not survive a write under
+    # v1alpha4 - git set 1, the object read back without it - so the diff
+    # could never close and selfHeal re-applied the CR forever. One replica is
+    # the operator default, so dropping it changes nothing about what runs.
+    # If you ever need more than one, express it as a Deployment override
+    # (`oc explain backstage.spec.deployment`), not here.
     route:
       enabled: true
   database:
