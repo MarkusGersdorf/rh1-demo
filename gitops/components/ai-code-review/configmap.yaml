@@ -10,7 +10,7 @@ data:
   # vllm     - live GPU inference.
   SCANNER_BACKEND: "replay"
 
-  MODEL_ENDPOINT: "http://foundation-sec-reasoning-predictor.lightwell-inward.svc.cluster.local:8080"
+  MODEL_ENDPOINT: "http://foundation-sec-reasoning-predictor.lightwell-inward.svc.cluster.local"
   MODEL_NAME: "fdtn-ai/Foundation-Sec-8B-Reasoning"
   MODEL_MAX_TOKENS: "2048"
   MODEL_TIMEOUT_SECONDS: "600"

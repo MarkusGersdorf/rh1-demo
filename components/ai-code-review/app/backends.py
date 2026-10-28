@@ -293,7 +293,7 @@ def build_backend() -> Backend:
     """Construct the backend named by SCANNER_BACKEND."""
     choice = os.getenv("SCANNER_BACKEND", "replay").lower()
     model = os.getenv("MODEL_NAME", "fdtn-ai/Foundation-Sec-8B-Reasoning")
-    endpoint = os.getenv("MODEL_ENDPOINT", "http://foundation-sec-reasoning-predictor.lightwell-inward.svc.cluster.local:8080")
+    endpoint = os.getenv("MODEL_ENDPOINT", "http://foundation-sec-reasoning-predictor.lightwell-inward.svc.cluster.local")
     api_key = os.getenv("MODEL_API_KEY") or None
 
     if choice == "llamacpp":
