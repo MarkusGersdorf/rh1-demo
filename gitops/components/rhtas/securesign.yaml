@@ -60,13 +60,53 @@ spec:
   tuf:
     externalAccess:
       enabled: true
-  # No TSA. The demo signs with a cosign key and never passes
-  # --timestamp-server-url, so a timestamp authority buys nothing and costs
-  # the one piece of setup that reliably goes wrong: tsa.signer.certificateChain
-  # is required once the block exists, and pointing it at a secret nobody
-  # creates leaves Securesign pending forever.
+  # A TSA, even though the demo never passes --timestamp-server-url.
   #
-  # If you do add it back, the field is `tsa`. It is not `timestampAuthority`
-  # - that name is in no served version of this CRD, and server-side apply
-  # rejects it with ".spec.timestampAuthority: field not declared in schema",
-  # which fails the whole Application rather than just the field.
+  # This block used to be absent on the reasoning that a timestamp authority
+  # buys the demo nothing. That was true for cosign v2 and is wrong now: TUF
+  # autodiscovers a TimestampAuthority to assemble tsa.certchain.pem, finds
+  # none, and parks forever on
+  #
+  #   tsa.certchain.pem=False  failed to autodiscovery service:
+  #                            no *v1.TimestampAuthorityList found
+  #
+  # which leaves Securesign at Ready=False and publishes no TUF URL. cosign
+  # v3 needs that TUF root to verify Rekor inclusion proofs - without it,
+  # signing dies on "not enough verified log entries from transparency log:
+  # 0 < 1". So omitting the TSA to avoid one hang caused a worse one.
+  #
+  # The old warning still holds and is why the chain is spelled out: once the
+  # block exists, tsa.signer.certificateChain is required, and the CRD
+  # rejects a partial chain with "rootCA/leafCA/intermediateCA are all
+  # required when certificateChainRef is not provided". Giving all three an
+  # organizationName lets the operator self-provision the certificates, so
+  # nothing points at a secret nobody creates.
+  #
+  # The field is `tsa`. It is not `timestampAuthority` - that name is in no
+  # served version of this CRD, and server-side apply rejects it with
+  # ".spec.timestampAuthority: field not declared in schema", failing the
+  # whole Application rather than just the field. Equally, `externalAccess`
+  # below is the v1alpha1 spelling; v1 calls it `ingress`. Verified against
+  # the CRD, not guessed:
+  #
+  #   oc get crd securesigns.rhtas.redhat.com -o json | jq '
+  #     .spec.versions[] | {(.name): (.schema.openAPIV3Schema.properties
+  #     .spec.properties.tsa.properties | keys)}'
+  tsa:
+    externalAccess:
+      enabled: true
+    signer:
+      type: file
+      certificateChain:
+        rootCA:
+          organizationName: Red Hat Demo
+          organizationEmail: lightwell-inward@redhat.com
+          commonName: tsa-root.lightwell-inward.demo
+        intermediateCA:
+          - organizationName: Red Hat Demo
+            organizationEmail: lightwell-inward@redhat.com
+            commonName: tsa-intermediate.lightwell-inward.demo
+        leafCA:
+          organizationName: Red Hat Demo
+          organizationEmail: lightwell-inward@redhat.com
+          commonName: tsa.lightwell-inward.demo
