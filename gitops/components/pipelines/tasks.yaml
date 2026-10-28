@@ -42,6 +42,11 @@ spec:
         cd repo
         git checkout "$(params.revision)"
 
+        # Later tasks run in different pods with different UIDs under
+        # restricted-v2 SCC. Write a gitconfig into the shared workspace so
+        # every subsequent step that sets GIT_CONFIG_GLOBAL can use git.
+        printf '[safe]\n\tdirectory = *\n' > "$(workspaces.source.path)/.gitconfig"
+
         COMMIT="$(git rev-parse HEAD)"
         BASE="$(params.base-revision)"
         if [[ -z "${BASE}" ]]; then
@@ -371,6 +376,9 @@ spec:
       workingDir: $(workspaces.source.path)/repo
       # Generous: CPU inference on an 8B reasoning model is minutes, not seconds.
       timeout: 20m0s
+      env:
+        - name: GIT_CONFIG_GLOBAL
+          value: $(workspaces.source.path)/.gitconfig
       script: |
         #!/usr/bin/env python3
         """Collect the diff, ask the model, enforce the verdict."""
