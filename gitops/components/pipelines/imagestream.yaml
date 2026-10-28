@@ -1,0 +1,32 @@
+---
+# The ImageStream the pipeline pushes the demo app into.
+#
+# WHY THIS IS DECLARED RATHER THAN LEFT TO AUTO-CREATION
+#
+# OpenShift's internal registry will create an ImageStream on first push, but
+# it does that as the pushing identity - which needs `create` on imagestreams.
+# `system:image-builder`, the ClusterRole bound to pipeline-runner in
+# rbac.yaml, grants `imagestreams/layers` get+update and nothing more. It can
+# push into a stream that exists; it cannot bring one into being.
+#
+# The registry reports that refusal as "authentication required", not as a
+# permissions error, so it reads as a bad credential and sends you looking at
+# tokens and RoleBindings. Declaring the stream here removes the dependency on
+# auto-creation entirely, and is the more GitOps-honest answer anyway: the
+# artifact's destination is part of the desired state, not a side effect of
+# the first build that happens to run.
+#
+# demo-accounts, not lightwell-inward: the demo app is deliberately built into
+# a separate namespace from the pipeline that builds it, which is what makes
+# the RHACS admission check at deploy time a real cross-namespace gate.
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: accounts-api
+  namespace: demo-accounts
+spec:
+  lookupPolicy:
+    # The pipeline pushes and deploys by digest, so no tag resolution is
+    # wanted here - an image reference must stay the exact thing that was
+    # signed and attested.
+    local: false
