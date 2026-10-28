@@ -8,8 +8,11 @@
 # (as antares-localize does — source + antares-cli), the second one hits
 # "more than one PersistentVolumeClaim is bound" and the TaskRun is rejected.
 #
-# Setting coschedule to "pipelineruns" creates one affinity assistant per
-# PipelineRun, which co-schedules all tasks on a node that can see all PVCs.
+# "pipelineruns" fixes that but pins all pods to one node, which causes
+# resource pressure and init container OOM kills on smaller clusters.
+#
+# "disabled" removes the affinity assistant entirely and lets the Kubernetes
+# scheduler place pods using its built-in volume topology logic.
 #
 # USAGE
 #
@@ -24,4 +27,4 @@ metadata:
   name: config
 spec:
   pipeline:
-    coschedule: pipelineruns
+    coschedule: disabled
