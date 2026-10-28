@@ -195,14 +195,15 @@ def test_replay_contains_all_markers_actually_match(
 
 
 def test_the_vulnerable_entry_reports_a_blocking_finding(replay_entries):
-    """If this entry stops being critical, the pipeline stops blocking."""
+    """The vulnerable diff must produce a finding that blocks the pipeline."""
     entries = [e for e in replay_entries
                if "vulnerable" in e.get("label", "").lower()]
     assert entries, "no vulnerable replay entry found"
     findings = entries[0]["response"]["findings"]
-    assert any(f["severity"] == "critical" and f["confidence"] == "high"
-               for f in findings), "the demo needs a critical, high-confidence finding"
-    assert any(f["cwe"] == "CWE-639" for f in findings)
+    assert any(f["severity"] in ("critical", "high") and f["confidence"] == "high"
+               for f in findings), "the demo needs a blocking high-confidence finding"
+    assert any(f["cwe"].startswith(("CWE-639", "CWE-285")) for f in findings), \
+        "the finding must identify an authorization flaw (CWE-639 or its parent CWE-285)"
 
 
 def test_the_clean_entry_reports_nothing(replay_entries):

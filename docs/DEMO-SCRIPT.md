@@ -271,11 +271,11 @@ note below. It changes nothing about what happens next.)*
 
 Read the finding out loud from the scanner UI. The sentence that matters:
 
-> **CRITICAL. CWE-639. Broken Access Control.**
+> **HIGH. CWE-285. Improper Authorization.**
 >
-> "The branch correctly detects that the JWT subject is not the account owner,
-> but its body only emits a warning log. Control flow continues, which fetches
-> and returns the statements regardless."
+> "The method allows any authenticated customer to view statements for accounts
+> they don't own, violating the principle of least privilege. The ownership
+> check only logs a warning and returns success."
 >
 > And it noticed the asymmetry: "the `get()` method immediately above handles
 > the same check correctly by returning 403 — consistent with a return

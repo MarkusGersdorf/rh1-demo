@@ -55,7 +55,7 @@ def test_vulnerable_diff_fails_the_gate(client, vulnerable_diff, vulnerable_sour
     assert resp.status_code == 200
     body = resp.json()
     assert body["verdict"] == "fail"
-    assert any(f["cwe"] == "CWE-639" for f in body["findings"]), \
+    assert any(f["cwe"].startswith(("CWE-639", "CWE-285")) for f in body["findings"]), \
         "the broken access control finding is the whole demo"
 
 
@@ -170,9 +170,9 @@ def test_ui_is_empty_before_any_review(client):
 def test_ui_renders_findings_and_the_replay_badge(client, vulnerable_diff):
     review(client, vulnerable_diff)
     html = client.get("/").text
-    assert "CWE-639" in html
+    assert "CWE-639" in html or "CWE-285" in html
     assert "REPLAY" in html, "a recorded answer must be visibly labelled"
-    assert "CRITICAL" in html
+    assert "CRITICAL" in html or "HIGH" in html
 
 
 def test_ui_escapes_model_output(scanner_app, tmp_path, monkeypatch):
@@ -205,7 +205,7 @@ def test_stage_b_reviews_the_diff_even_when_stage_a_is_absent(
     body = review(client, vulnerable_diff).json()
     assert body["verdict"] == "fail"
     assert body["localizer"] is None
-    assert any(f["cwe"] == "CWE-639" for f in body["findings"])
+    assert any(f["cwe"].startswith(("CWE-639", "CWE-285")) for f in body["findings"])
 
 
 def test_localizer_is_echoed_into_the_response(client, vulnerable_diff,

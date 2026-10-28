@@ -1,57 +1,44 @@
 {
   "_comment": [
-    "PROVENANCE: hand-authored seed, NOT a model capture.",
-    "This is a worked example of the shape and quality of answer the demo",
-    "expects, so the pipeline is testable before the model is serving.",
-    "Replace it with real output: scripts/capture-replay.sh (sets",
-    "provenance=captured). Do not describe a seed answer as live inference."
+    "PROVENANCE: captured from the live model by scripts/capture-replay.sh."
   ],
-  "provenance": "hand-authored-seed",
+  "provenance": "captured",
   "label": "RHONE-4412 introduces the statements endpoint (vulnerable)",
+  "capturedModel": "fdtn-ai/Foundation-Sec-8B-Reasoning",
+  "capturedBackend": "llamacpp",
   "fingerprint": "4a82d883bc2a355eed4fcf273251db9a3d74637e83454f63cd111edf4cd6ab77",
   "match": {
     "priority": 10,
     "contains_all": [
-      "ownership mismatch: subject=%s account=%s owner=%s",
-      "List<Statement> statements = repository.statementsFor("
+      "ownership mismatch: subject=%s account=%s owner=%s"
     ]
   },
-  "latency_ms": 64210,
+  "latency_ms": 261334,
   "usage": {
-    "prompt_tokens": 2310,
-    "completion_tokens": 1104,
-    "total_tokens": 3414
+    "completion_tokens": 824,
+    "prompt_tokens": 1613,
+    "total_tokens": 2437,
+    "prompt_tokens_details": {
+      "cached_tokens": 1612
+    }
   },
   "response": {
-    "summary": "The new statements endpoint evaluates account ownership but discards the result, so any authenticated customer can read any account's statements. A secondary issue leaks parser internals in the 400 response.",
+    "summary": "Broken Access Control",
     "findings": [
       {
-        "title": "Ownership check result is logged and then discarded, allowing cross-tenant statement access",
-        "severity": "critical",
+        "title": "Authorization bypass for account statements",
+        "severity": "high",
         "confidence": "high",
-        "cwe": "CWE-639",
+        "cwe": "CWE-285: Improper Authorization",
         "owasp": "A01:2021-Broken Access Control",
-        "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
-        "cvss_score": 6.5,
+        "cvss_vector": "",
+        "cvss_score": 0.0,
         "file": "src/main/java/com/redhat/demo/accounts/AccountResource.java",
-        "line": 67,
-        "rationale": "The branch at line 67 correctly detects that the JWT subject is not the account owner, but its body only emits a warning log. Control flow continues to line 73, which fetches and returns the statements regardless. The @RolesAllowed(\"customer\") annotation establishes only that the caller holds the customer role; it says nothing about which account the caller owns. Because the account identifier is taken directly from the path, any authenticated customer can enumerate identifiers and read other customers' statements, including holder name and transaction history. Note that the get() method immediately above this one handles the same check correctly by returning 403 - the asymmetry is consistent with a return statement lost during a refactor.",
-        "exploit": "Authenticate as user-alice, then GET /accounts/ACC-2002/statements with Alice's bearer token. Expected 403; actual 200 with Bob Ruiz's full transaction history. No special tooling required.",
-        "fix": "Return a 403 inside the branch: add `return Response.status(Response.Status.FORBIDDEN).build();` after the warning at line 69. Longer term, move the ownership predicate into the repository or a CDI interceptor so the check cannot be separated from its effect, and add a test asserting 403 for a non-owner."
-      },
-      {
-        "title": "Date parsing failure returns exception message and type to the client",
-        "severity": "medium",
-        "confidence": "high",
-        "cwe": "CWE-209",
-        "owasp": "A04:2021-Insecure Design",
-        "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:L/I:N/A:N",
-        "cvss_score": 4.3,
-        "file": "src/main/java/com/redhat/demo/accounts/AccountResource.java",
-        "line": 82,
-        "rationale": "The catch block places e.getMessage() and e.toString() into the response body. DateTimeParseException messages echo the offending input and the parser's internal index, and toString() discloses the fully-qualified exception class. This hands an attacker a reliable oracle for probing input handling and confirms the server-side stack in use. It is not exploitable on its own, but it is free reconnaissance.",
-        "exploit": "GET /accounts/ACC-1001/statements?from=not-a-date returns a body containing the raw input and java.time.format.DateTimeParseException.",
-        "fix": "Log the exception at debug and return a fixed, non-reflective message such as {\"error\": \"from and to must be ISO-8601 dates (yyyy-MM-dd)\"}."
+        "line": 44,
+        "rationale": "The method allows any authenticated customer to view statements for accounts they don't own, violating the principle of least privilege. The ownership check only logs a warning and returns success.",
+        "corroborated_by_localizer": false,
+        "exploit": "An attacker could access other users' financial data by manipulating account IDs",
+        "fix": ""
       }
     ]
   }
