@@ -1,0 +1,27 @@
+---
+# Merge patch for the TektonConfig CR the Pipelines operator creates.
+#
+# THE PROBLEM THIS SOLVES
+#
+# The default coschedule mode is "workspaces", which creates one affinity
+# assistant per workspace. When a TaskRun binds two PVC-backed workspaces
+# (as antares-localize does — source + antares-cli), the second one hits
+# "more than one PersistentVolumeClaim is bound" and the TaskRun is rejected.
+#
+# Setting coschedule to "pipelineruns" creates one affinity assistant per
+# PipelineRun, which co-schedules all tasks on a node that can see all PVCs.
+#
+# USAGE
+#
+#   oc patch tektonconfig config --type=merge --patch-file gitops/bootstrap/05-tekton-coschedule.yaml
+#
+# Like 04-argocd-subscription-health.yaml, this is a patch body, not something
+# to `oc apply`. It carries apiVersion/kind/metadata for readability and
+# because CI asserts every YAML under gitops/ has them.
+apiVersion: operator.tekton.dev/v1alpha1
+kind: TektonConfig
+metadata:
+  name: config
+spec:
+  pipeline:
+    coschedule: pipelineruns

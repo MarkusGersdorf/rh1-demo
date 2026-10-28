@@ -97,6 +97,15 @@ info "RHDH's copy is written by scripts/02-signing-setup.sh, from this same secr
 step "Applying the root application"
 oc apply -f "${ROOT}/gitops/bootstrap/03-root-application.yaml"
 
+step "Tekton coschedule"
+# The Pipelines operator creates the TektonConfig CR asynchronously.  The
+# antares-localize task binds two PVC workspaces; the default coschedule mode
+# ("workspaces") rejects that.  Wait for the CR, then patch.
+wait_for "TektonConfig" 600 oc get tektonconfig config
+oc patch tektonconfig config --type=merge \
+  --patch-file "${ROOT}/gitops/bootstrap/05-tekton-coschedule.yaml"
+ok "coschedule set to pipelineruns"
+
 cat <<MSG
 
 $(ok "bootstrap applied")
