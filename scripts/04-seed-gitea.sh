@@ -27,12 +27,12 @@ info "gitea: ${GITEA_URL}"
 
 step "Admin user"
 if oc exec -n gitea deploy/gitea -- \
-     su git -c "gitea admin user list --admin" 2>/dev/null | grep -q "${GITEA_USER}"; then
+     gitea admin user list --admin 2>/dev/null | grep -q "${GITEA_USER}"; then
   ok "user ${GITEA_USER} exists"
 else
-  oc exec -n gitea deploy/gitea -- su git -c \
-    "gitea admin user create --username ${GITEA_USER} --password '${GITEA_PASSWORD}' \
-     --email demo@redhat.com --admin --must-change-password=false" \
+  oc exec -n gitea deploy/gitea -- \
+    gitea admin user create --username "${GITEA_USER}" --password "${GITEA_PASSWORD}" \
+     --email demo@redhat.com --admin --must-change-password=false \
     || die "could not create the Gitea admin user"
   ok "created ${GITEA_USER}"
 fi
