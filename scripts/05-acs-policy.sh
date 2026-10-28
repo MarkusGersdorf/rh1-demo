@@ -64,6 +64,78 @@ else
   ok "created signature integration ${NEW}"
 fi
 
+step "Internal registry integration"
+# RHACS autogenerates registry integrations from openshift-config/pull-secret,
+# which only names the EXTERNAL registries (quay.io, registry.redhat.io, ...).
+# Nothing there covers the cluster's own registry, so `roxctl image check`
+# against a freshly built image fails before it evaluates a single policy:
+#
+#   image enrichment error: error getting metadata for image:
+#   image-registry.openshift-image-registry.svc:5000/demo-accounts/accounts-api@sha256:...
+#   error: no matching image registries found
+#
+# That reads like a policy or signature problem on stage and is neither -
+# Central simply cannot see into the registry the pipeline just pushed to.
+#
+# Central needs pull credentials of its own. A dedicated ServiceAccount with
+# system:image-puller on demo-accounts is the smallest thing that works; its
+# SA + RoleBinding are declared in gitops/components/pipelines/rbac.yaml, and
+# only the token is minted here, because a token cannot live in git.
+PULL_NS=demo-accounts
+PULL_SA=acs-registry-puller
+PULL_SECRET="${PULL_SA}-token"
+
+if ! oc get sa "${PULL_SA}" -n "${PULL_NS}" >/dev/null 2>&1; then
+  warn "ServiceAccount ${PULL_NS}/${PULL_SA} is missing - is the pipelines"
+  warn "Application synced? Skipping the registry integration."
+else
+  # OpenShift no longer auto-creates SA token secrets, so ask for one
+  # explicitly. Long-lived on purpose: Central holds it, and a bounded token
+  # would silently stop enriching images partway through the demo.
+  oc apply -f - >/dev/null <<YAML
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${PULL_SECRET}
+  namespace: ${PULL_NS}
+  annotations:
+    kubernetes.io/service-account.name: ${PULL_SA}
+type: kubernetes.io/service-account-token
+YAML
+  for _ in $(seq 1 15); do
+    PULL_TOKEN="$(oc get secret "${PULL_SECRET}" -n "${PULL_NS}" \
+      -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)"
+    [[ -n "${PULL_TOKEN}" ]] && break
+    sleep 2
+  done
+
+  if [[ -z "${PULL_TOKEN:-}" ]]; then
+    warn "the ${PULL_SECRET} secret never got populated - add the registry"
+    warn "integration by hand in the RHACS console."
+  else
+    REG_ENDPOINT="image-registry.openshift-image-registry.svc:5000"
+    REG_NAME="openshift-internal-registry"
+    REG_PAYLOAD="$(jq -n --arg ep "${REG_ENDPOINT}" --arg pw "${PULL_TOKEN}" \
+      --arg name "${REG_NAME}" '{
+        name: $name, type: "docker", categories: ["REGISTRY"],
+        docker: { endpoint: $ep, username: "serviceaccount",
+                  password: $pw, insecure: true }
+      }')"
+    REG_EXISTING="$(api GET /v1/imageintegrations | jq -r \
+      --arg name "${REG_NAME}" '.integrations[]? | select(.name==$name) | .id')"
+    if [[ -n "${REG_EXISTING}" ]]; then
+      api PUT "/v1/imageintegrations/${REG_EXISTING}" \
+        -d "$(jq --arg id "${REG_EXISTING}" '. + {id:$id}' <<< "${REG_PAYLOAD}")" >/dev/null
+      ok "updated registry integration ${REG_EXISTING}"
+    else
+      REG_NEW="$(api POST /v1/imageintegrations -d "${REG_PAYLOAD}" | jq -r '.id // empty')"
+      [[ -n "${REG_NEW}" ]] \
+        && ok "created registry integration ${REG_NEW}" \
+        || warn "could not create the registry integration - check the token's permissions"
+    fi
+  fi
+fi
+
 step "Enforcement policy"
 if oc get crd securitypolicies.config.stackrox.io >/dev/null 2>&1; then
   ok "policy-as-code CRD present - the RHACM Policy manages the policy"

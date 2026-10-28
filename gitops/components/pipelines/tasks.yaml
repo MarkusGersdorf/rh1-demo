@@ -669,7 +669,15 @@ spec:
       type: string
   steps:
     - name: sign
-      image: registry.redhat.io/rhtas/cosign-rhel9:latest
+      # Pinned, because rhtas/cosign-rhel9 has NO `latest` tag. Pulling
+      # :latest fails the TaskRun before the step runs, with "manifest
+      # unknown" - which reads like a registry outage rather than a tag that
+      # was never published. Verified against registry.redhat.io: 100 tags,
+      # none of them `latest`; newest release is 1.5.0.
+      #
+      #   curl -s -H "Authorization: Bearer $T" \
+      #     https://registry.redhat.io/v2/rhtas/cosign-rhel9/tags/list
+      image: registry.redhat.io/rhtas/cosign-rhel9:1.5.0
       workingDir: $(workspaces.source.path)
       env:
         - name: COSIGN_PASSWORD
@@ -802,7 +810,10 @@ spec:
     - name: source
   steps:
     - name: validate
-      image: registry.redhat.io/rhtas/ec-rhel9:latest
+      # Same as the cosign image above: rhtas/ec-rhel9 publishes no `latest`
+      # tag either. This one had not failed yet only because ec-validate runs
+      # after sign-and-attest, which fell over first.
+      image: registry.redhat.io/rhtas/ec-rhel9:0.4
       workingDir: $(workspaces.source.path)
       env:
         - name: COSIGN_PASSWORD
