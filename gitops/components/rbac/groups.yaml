@@ -12,6 +12,23 @@ apiVersion: user.openshift.io/v1
 kind: Group
 metadata:
   name: cluster-admins
+  annotations:
+    # Opt this ONE resource out of the Application's ServerSideApply=true.
+    # Argo CD cannot build a structured-merge diff for it and the whole
+    # Application stops comparing:
+    #
+    #   Failed to compare desired state to live state: failed to calculate
+    #   diff: error calculating structured merge diff: unable to resolve
+    #   parseableType for GroupVersionKind: user.openshift.io/v1, Kind=Group
+    #
+    # Group is a pre-spec-convention type - `users` sits at the top level
+    # rather than under .spec - so there is no parseable type for the
+    # merge to work from. Client-side apply has no such requirement, and
+    # the resource is three lines with no field-ownership to protect.
+    #
+    # This fails the whole Application, not just this file: with the diff
+    # uncomputable, rbac reports Unknown and never reconciles.
+    argocd.argoproj.io/sync-options: ServerSideApply=false
   labels:
     lightwell-inward.redhat.com/demo: "true"
 users:
