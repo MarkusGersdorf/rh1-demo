@@ -43,9 +43,10 @@ spec:
         git checkout "$(params.revision)"
 
         # Later tasks run in different pods with different UIDs under
-        # restricted-v2 SCC. Write a gitconfig into the shared workspace so
-        # every subsequent step that sets GIT_CONFIG_GLOBAL can use git.
+        # restricted-v2 SCC. Open the workspace so every subsequent task can
+        # write results, and tell git to accept the directory from any UID.
         printf '[safe]\n\tdirectory = *\n' > "$(workspaces.source.path)/.gitconfig"
+        chmod -R a+rwX "$(workspaces.source.path)"
 
         COMMIT="$(git rev-parse HEAD)"
         BASE="$(params.base-revision)"
