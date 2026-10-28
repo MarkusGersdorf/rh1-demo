@@ -92,11 +92,14 @@ spec:
   #   oc get crd securesigns.rhtas.redhat.com -o json | jq '
   #     .spec.versions[] | {(.name): (.schema.openAPIV3Schema.properties
   #     .spec.properties.tsa.properties | keys)}'
+  # No `signer.type` here: that field exists in v1 and NOT in v1alpha1, and
+  # ServerSideApply rejects it outright - ".spec.tsa.signer.type: field not
+  # declared in schema" - which fails the whole Application. The signer
+  # backend defaults to file, which is what a self-provisioned chain needs.
   tsa:
     externalAccess:
       enabled: true
     signer:
-      type: file
       certificateChain:
         rootCA:
           organizationName: Red Hat Demo
