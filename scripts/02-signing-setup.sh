@@ -13,11 +13,21 @@ else
   TMP="$(mktemp -d)"; trap 'rm -rf "${TMP}"' EXIT
   PASS="$(openssl rand -hex 16)"
 
-  # cosign's k8s:// key reference expects exactly these three keys.
+  # cosign's k8s:// reference reads the passphrase from the secret key
+  # `cosign.password`, NOT from the COSIGN_PASSWORD environment variable.
+  # Setting the env var and naming the secret key `password` looks right and
+  # fails at signing time with
+  #
+  #   getting signer: reading key: decrypt: encrypted: decryption failed
+  #
+  # which reads like a corrupt key or a wrong passphrase rather than a key
+  # cosign never looked at. `password` is kept alongside it so humans and
+  # scripts that read the secret directly still find what they expect.
   ( cd "${TMP}" && COSIGN_PASSWORD="${PASS}" cosign generate-key-pair >/dev/null )
   oc create secret generic cosign-keypair -n "${NS}" \
     --from-file=cosign.key="${TMP}/cosign.key" \
     --from-file=cosign.pub="${TMP}/cosign.pub" \
+    --from-literal=cosign.password="${PASS}" \
     --from-literal=password="${PASS}"
   ok "created cosign-keypair in ${NS}"
 
