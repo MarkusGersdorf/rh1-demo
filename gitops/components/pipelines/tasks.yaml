@@ -662,6 +662,13 @@ spec:
     - name: rekor-url
       type: string
       default: http://rekor-server.trusted-artifact-signer.svc.cluster.local
+    - name: tuf-url
+      type: string
+      description: >
+        RHTAS TUF root. cosign v3 verifies the Rekor inclusion proof against
+        the trust root served here; without it, signing fails with "not
+        enough verified log entries from transparency log: 0 < 1".
+      default: http://tuf.trusted-artifact-signer.svc.cluster.local
   workspaces:
     - name: source
   results:
@@ -692,37 +699,52 @@ spec:
         set -euo pipefail
         IMAGE="$(params.image-ref)"
         REKOR="$(params.rekor-url)"
+        TUF="$(params.tuf-url)"
 
-        # cosign v3 - which is what BOTH rhtas/cosign-rhel9 1.4.4 and 1.5.0
-        # ship - refuses to combine service URLs with a signing config:
+        # THE FLAG COMBINATION BELOW IS LOAD-BEARING. Every part of it was
+        # arrived at by elimination against a real cluster; changing any one
+        # of them brings back a failure that reads like something else.
         #
-        #   Error: cannot specify service URLs and use signing config
+        # Both cosign-rhel9 1.4.4 and 1.5.0 ship cosign v3.0.4, so pinning an
+        # older image does not avoid any of this.
         #
-        # so --rekor-url and --tlog-upload are gone. The private Rekor is
-        # named in a signing config instead. --tlog-upload=false is not an
-        # escape hatch either; v3 rejects that against a signing config too
-        # and tells you to supply one with no transparency log service -
-        # which would drop the Rekor entry this demo exists to produce.
-        SIGNING_CONFIG=/tmp/signing-config.json
-        cat > "${SIGNING_CONFIG}" <<JSON
-        {
-          "mediaType": "application/vnd.dev.sigstore.signingconfig.v0.2+json",
-          "caUrls": [],
-          "oidcUrls": [],
-          "rekorTlogUrls": [
-            {
-              "url": "${REKOR}",
-              "majorApiVersion": 1,
-              "validFor": { "start": "2024-01-01T00:00:00Z" },
-              "operator": "lightwell-inward"
-            }
-          ],
-          "tsaUrls": [],
-          "rekorTlogConfig": { "selector": "ANY" },
-          "tsaConfig": { "selector": "ANY" }
-        }
-        JSON
-        sed -i 's/^        //' "${SIGNING_CONFIG}"
+        #   --use-signing-config=false
+        #     v3 defaults to a signing config and then refuses service URLs:
+        #     "cannot specify service URLs and use signing config". Supplying
+        #     a signing config naming the private Rekor DOES work and uploads
+        #     correctly - but it forces the new bundle format, see below.
+        #
+        #   --new-bundle-format=false
+        #     The new format writes the signature as an OCI image index.
+        #     OpenShift's internal registry stores manifests through
+        #     ImageStreamMapping, which requires architecture and os on every
+        #     manifest in an index - a signature has neither:
+        #
+        #       CreateImageStreamMapping: Image ... is invalid:
+        #       [dockerImageManifests[0].architecture: Required value,
+        #        dockerImageManifests[0].os: Required value]
+        #
+        #     surfacing to cosign as an unhelpful "UNKNOWN: unknown error".
+        #     v3 refuses --new-bundle-format=false together WITH a signing
+        #     config, which is the real reason the signing-config route is
+        #     unusable here: it is the registry, not cosign, that cannot take
+        #     the result.
+        #
+        #   --rekor-url / --tlog-upload=true
+        #     Legal again once the signing config is off. This is what puts
+        #     the entry in the private Rekor.
+        #
+        # If the demo ever moves off the internal registry to one that
+        # accepts OCI indexes (Quay), prefer the signing-config form.
+        #
+        # cosign verifies the Rekor inclusion proof against the TUF trust
+        # root. Without initializing it, signing dies on "not enough verified
+        # log entries from transparency log: 0 < 1" even though the upload
+        # succeeded - note TUF only publishes a URL once the Securesign CR
+        # has a TimestampAuthority, see gitops/components/rhtas.
+        echo "== initializing trust root from ${TUF}"
+        curl -sSkf -o /tmp/tuf-root.json "${TUF}/root.json"
+        cosign initialize --mirror="${TUF}" --root=/tmp/tuf-root.json
 
         # cosign talks to the registry itself and has no OpenShift
         # integration, so it needs credentials for the same reason buildah
@@ -740,8 +762,9 @@ spec:
 
         echo "== signing ${IMAGE}"
         cosign sign --key k8s://lightwell-inward/cosign-keypair \
-          --signing-config "${SIGNING_CONFIG}" \
-          --allow-insecure-registry \
+          --use-signing-config=false --new-bundle-format=false \
+          --rekor-url="${REKOR}" --tlog-upload=true \
+          --allow-insecure-registry --yes \
           "${IMAGE}"
 
         # Keyless equivalent, for the production story:
@@ -760,21 +783,23 @@ spec:
         echo "== attaching AI code review attestation"
         cat ai-review-predicate.json
 
+        # Same flag set as the signature above, for the same reasons.
         cosign attest --key k8s://lightwell-inward/cosign-keypair \
-          --signing-config "${SIGNING_CONFIG}" \
+          --use-signing-config=false --new-bundle-format=false \
+          --rekor-url="${REKOR}" --tlog-upload=true \
           --type "https://redhat.com/lightwell-inward/code-review/v1" \
           --predicate ai-review-predicate.json \
-          --allow-insecure-registry \
+          --allow-insecure-registry --yes \
           "${IMAGE}"
 
         echo
         echo "== verifying what we just produced"
         cosign verify --key k8s://lightwell-inward/cosign-keypair \
-          --allow-insecure-registry \
+          --rekor-url="${REKOR}" --allow-insecure-registry \
           --insecure-ignore-tlog=false "${IMAGE}"
 
         cosign verify-attestation --key k8s://lightwell-inward/cosign-keypair \
-          --allow-insecure-registry \
+          --rekor-url="${REKOR}" --allow-insecure-registry \
           --type "https://redhat.com/lightwell-inward/code-review/v1" \
           "${IMAGE}" > /tmp/att.json
 
