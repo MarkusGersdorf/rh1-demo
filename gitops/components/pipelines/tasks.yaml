@@ -246,7 +246,22 @@ spec:
       default: antares-1b
     - name: max-cwes
       type: string
-      default: "5"
+      # One CWE class, because the sweep is one request per file per CWE and
+      # this model runs at ~8 tok/s on CPU. With ANTARES_MAX_TOKENS at 1024
+      # that is ~128s per request, so against the demo app's 5 source files:
+      #
+      #   max-cwes 1  ->   5 requests  ~11 min   fits the 25m TaskRun timeout
+      #   max-cwes 2  ->  10 requests  ~21 min   tight
+      #   max-cwes 5  ->  25 requests  ~53 min   times out
+      #
+      # The old default of 5 could never finish, which is one of the reasons
+      # Stage A has only ever reported "no Antares report".
+      #
+      # Nothing is lost that the demo relies on. Stage A is advisory: it
+      # narrows attention and is recorded as a second reviewer in the
+      # attestation, and one CWE class demonstrates that as well as five.
+      # Raise it on GPU, where the arithmetic changes completely.
+      default: "1"
   workspaces:
     - name: source
     - name: antares-cli
