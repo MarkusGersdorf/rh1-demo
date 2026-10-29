@@ -119,7 +119,25 @@ data:
       PY="$(command -v python3.12 || command -v python3)"
       echo "[fetch] building the CLI venv with ${PY} ($("${PY}" -V 2>&1))"
       rm -rf "${CLI_ROOT}/venv"
-      "${PY}" -m venv --copies "${CLI_ROOT}/venv"
+      if ! "${PY}" -m venv --copies "${CLI_ROOT}/venv" 2>/dev/null; then
+        # This job runs on ghcr.io/ggml-org/llama.cpp:full, which is Debian.
+        # Debian splits ensurepip into a python3-venv package it does not
+        # ship, so `-m venv` cannot produce a pip-enabled environment:
+        #
+        #   The virtual environment was not created successfully because
+        #   ensurepip is not available.
+        #
+        # The system pip IS present, and virtualenv carries its own pip
+        # wheel, so it works where venv cannot. Do NOT swap this for
+        # `venv --without-pip` plus get-pip: that was the original code and
+        # it produced the silently broken environment this block replaced.
+        echo "[fetch] ensurepip unavailable - falling back to virtualenv"
+        "${PY}" -m pip install --quiet --no-cache-dir virtualenv
+        rm -rf "${CLI_ROOT}/venv"
+        "${PY}" -m virtualenv --copies "${CLI_ROOT}/venv"
+      fi
+      [[ -x "${CLI_ROOT}/venv/bin/pip" ]] \
+        || { echo "[fetch] ERROR: the venv has no pip - cannot install the CLI"; exit 1; }
 
       # The gated zip contains a SOURCE TREE (pyproject.toml, src/), not a
       # wheel, so the old `install .../pkg/*.whl` matched nothing. It failed
