@@ -15,7 +15,18 @@ metadata:
     argocd.argoproj.io/sync-wave: "6"
 spec:
   accessModes:
-    - ReadWriteOnce
+    # ReadWriteMany on CephFS, not ReadWriteOnce on RBD. This volume is
+    # mounted by more than one pod at once and RWO cannot do that - it binds
+    # to a single NODE, so the second pod gets
+    #
+    #   Multi-Attach error for volume "pvc-...": Volume is already used by
+    #   pod(s) ...
+    #
+    # and sits Pending until something is deleted. No amount of ordering or
+    # job lifecycle management fixes that; the access mode is simply wrong
+    # for the sharing this demo needs.
+    - ReadWriteMany
+  storageClassName: ocs-external-storagecluster-cephfs
   resources:
     requests:
       storage: 10Gi
@@ -29,7 +40,10 @@ metadata:
     argocd.argoproj.io/sync-wave: "6"
 spec:
   accessModes:
-    - ReadWriteOnce
+    # RWX on CephFS - see antares-fetch-job.yaml for why. Shared between the
+    # fetch Job and the predictor that serves from it.
+    - ReadWriteMany
+  storageClassName: ocs-external-storagecluster-cephfs
   resources:
     requests:
       # 1B at F16 is ~2.5GB plus the source weights during conversion. A long

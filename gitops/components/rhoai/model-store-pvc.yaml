@@ -10,7 +10,10 @@ metadata:
     argocd.argoproj.io/sync-wave: "6"
 spec:
   accessModes:
-    - ReadWriteOnce
+    # RWX on CephFS - see antares-fetch-job.yaml for why. Shared between the
+    # fetch Job and the predictor that serves from it.
+    - ReadWriteMany
+  storageClassName: ocs-external-storagecluster-cephfs
   resources:
     requests:
       storage: 80Gi
