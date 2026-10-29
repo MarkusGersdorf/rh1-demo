@@ -1,0 +1,186 @@
+---
+# ONE-SHOT DATA POPULATION. Not synced as live objects - deliberately kept
+# out of kustomization.yaml, the same way pipelinerun-templates.yaml is.
+#
+#   oc apply -f gitops/components/rhoai/fetch-jobs.yaml
+#
+# or let scripts/07-fetch-models.sh do it, which also waits for them.
+#
+# WHY THESE CANNOT BE RECONCILED
+#
+# Each Job populates a ReadWriteOnce PVC that an InferenceService later
+# mounts and keeps mounted:
+#
+#   model-fetch    -> model-store    <- foundation-sec-reasoning-predictor
+#   antares-fetch  -> antares-model  <- antares-predictor
+#
+# On a fresh cluster the sync waves get this right: PVCs and fetch at 6,
+# InferenceServices at 7, so the Jobs finish and release the volumes before
+# any predictor wants them. Afterwards they can never run again - the
+# predictor holds the volume for as long as it serves, and RWO means one
+# node. A recreated Job sits Pending forever.
+#
+# That would be merely untidy except antares-fetch also mounts antares-cli,
+# which antares-localize needs, and an unschedulable pod still holds its
+# attachment. So every re-creation deadlocks the pipeline:
+#
+#   Multi-Attach error for volume "pvc-...": Volume is already used by
+#   pod(s) antares-fetch-...
+#
+# and the TaskRun sits Pending with no container and nothing in its log.
+# Declaring these in kustomization.yaml meant Argo CD recreated them on
+# every sync, so the deadlock came back each time it was cleared by hand.
+#
+# Re-fetching is therefore a deliberate act: scale the relevant predictor to
+# zero, apply this file, wait, scale back up.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-fetch
+  namespace: lightwell-inward
+  labels:
+    lightwell-inward.redhat.com/fetch: model
+  annotations:
+    # Not a Sync hook, for the same reason as antares-fetch - see the long
+    # comment there. Recreated on every sync, this Job fights
+    # foundation-sec-reasoning for the RWO model-store volume and can never
+    # schedule once the predictor is up. Created once at wave 6 instead;
+    # re-fetch with `oc delete job model-fetch`.
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app: model-fetch
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: fetch
+          image: ghcr.io/ggml-org/llama.cpp:full
+          command: ["bash", "/scripts/fetch.sh"]
+          env:
+            - name: MODEL_REPO
+              value: fdtn-ai/Foundation-Sec-8B-Reasoning
+            - name: QUANT
+              value: Q4_K_M
+            # Set this in the ConfigMap below to skip local conversion entirely.
+            - name: MODEL_GGUF_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: model-fetch-config
+                  key: MODEL_GGUF_URL
+                  optional: true
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: huggingface-token
+                  key: token
+                  optional: true
+            - name: HF_HUB_ENABLE_HF_TRANSFER
+              value: "0"
+            - name: HOME
+              value: /tmp
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+            limits:
+              cpu: "8"
+              memory: 24Gi
+          volumeMounts:
+            - name: model-store
+              mountPath: /mnt/models
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: model-store
+          persistentVolumeClaim:
+            claimName: model-store
+        - name: scripts
+          configMap:
+            name: model-fetch-script
+            defaultMode: 0755
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: antares-fetch
+  namespace: lightwell-inward
+  labels:
+    lightwell-inward.redhat.com/fetch: antares
+  annotations:
+    # NOT a Sync hook, deliberately. As `hook: Sync` with
+    # `hook-delete-policy: BeforeHookCreation` this Job was deleted and
+    # recreated on EVERY sync of the rhoai Application - which is fine while
+    # the model is being fetched and a deadlock once it has been.
+    #
+    # Both RWO volumes are claimed by then: antares-predictor holds
+    # antares-model, so a recreated fetch Job can never schedule - and while
+    # it sits unschedulable it holds antares-cli, which antares-localize
+    # needs. The pipeline then hangs with
+    #
+    #   Multi-Attach error for volume "pvc-...": Volume is already used by
+    #   pod(s) antares-fetch-...
+    #
+    # and the task sits Pending with no log to explain it. Predictor blocks
+    # fetch, fetch blocks the pipeline.
+    #
+    # As an ordinary wave-6 resource it is created once and never recreated.
+    # Wave ordering still does the real work on a fresh cluster: PVCs and
+    # fetch at 6, InferenceServices at 7, so the fetch finishes and releases
+    # both volumes before any predictor wants them. Re-fetching is now a
+    # deliberate `oc delete job antares-fetch`, not a side effect of an
+    # unrelated sync.
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app: antares-fetch
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: fetch
+          image: ghcr.io/ggml-org/llama.cpp:full
+          command: ["bash", "/scripts/fetch.sh"]
+          env:
+            - name: MODEL_REPO
+              value: fdtn-ai/antares-1b
+            # Pin to the revision the upstream POC validated against.
+            - name: MODEL_REVISION
+              value: 10417eb35641b32e7141157db19c76eb545193b6
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: huggingface-token
+                  key: token
+                  optional: true
+            - name: HOME
+              value: /tmp
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 12Gi
+          volumeMounts:
+            - name: antares-model
+              mountPath: /mnt/models
+            - name: antares-cli
+              mountPath: /mnt/cli
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: antares-model
+          persistentVolumeClaim:
+            claimName: antares-model
+        - name: antares-cli
+          persistentVolumeClaim:
+            claimName: antares-cli
+        - name: scripts
+          configMap:
+            name: antares-fetch-script
+            defaultMode: 0755

@@ -11,4 +11,9 @@ resources:
   # Stage A: the Antares localizer and its CLI.
   - antares-fetch-job.yaml
   - antares-inferenceservice.yaml
+  # fetch-jobs.yaml is intentionally excluded - see the file header. The two
+  # population Jobs cannot be reconciled: each writes a ReadWriteOnce PVC that
+  # an InferenceService then holds for as long as it serves, so a recreated
+  # Job sits Pending forever and deadlocks antares-localize on antares-cli.
+  # Apply them with scripts/07-fetch-models.sh.
   # - servingruntime-vllm-gpu.yaml   # uncomment when a GPU node exists
