@@ -380,6 +380,12 @@ spec:
       env:
         - name: GIT_CONFIG_GLOBAL
           value: $(workspaces.source.path)/.gitconfig
+        - name: GIT_CONFIG_COUNT
+          value: "1"
+        - name: GIT_CONFIG_KEY_0
+          value: safe.directory
+        - name: GIT_CONFIG_VALUE_0
+          value: "*"
       script: |
         #!/usr/bin/env python3
         """Collect the diff, ask the model, enforce the verdict."""
@@ -391,8 +397,13 @@ spec:
         SCANNER  = "$(params.scanner-url)".rstrip("/")
 
         def git(*args):
-            return subprocess.run(["git", *args], capture_output=True,
-                                  text=True, check=True).stdout
+            r = subprocess.run(["git", *args], capture_output=True, text=True)
+            if r.returncode:
+                print(f"git {' '.join(args)}: exit {r.returncode}", file=sys.stderr)
+                if r.stderr:
+                    print(r.stderr.rstrip(), file=sys.stderr)
+                r.check_returncode()
+            return r.stdout
 
         def _antares_digest():
             path = pathlib.Path(
