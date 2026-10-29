@@ -233,7 +233,14 @@ spec:
   params:
     - name: endpoint
       type: string
-      default: http://antares-predictor.lightwell-inward.svc.cluster.local:8080/v1/completions
+      # Port 80, not 8080. KServe RawDeployment publishes the predictor
+      # Service on 80 with targetPort 8080, so :8080 connects to nothing and
+      # the sweep hangs until it gives up. Same fix as a950904 made for the
+      # scanner's MODEL_ENDPOINT; this endpoint was missed.
+      #
+      #   oc get svc antares-predictor -n lightwell-inward
+      #   -> 80/TCP   (targetPort 8080)
+      default: http://antares-predictor.lightwell-inward.svc.cluster.local/v1/completions
     - name: model
       type: string
       default: antares-1b
