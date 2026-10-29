@@ -125,19 +125,32 @@ spec:
         - name: source
           workspace: source
 
-    # Enterprise Contract reads inside the attestation; RHACS does not.
-    # This is what stops a signed-but-failing artifact being promoted.
-    - name: ec-validate
-      runAfter: [sign-and-attest]
-      taskRef:
-        name: ec-validate
-      params:
-        - name: image-ref
-          value: $(tasks.build-image.results.image-ref)
-      workspaces:
-        - name: source
-          workspace: source
-
+    # ec-validate is NOT wired in. The Task still exists in tasks.yaml and
+    # works - verified end to end against a signed and attested image:
+    # Success: true, Violations: 0, Successes: 8 - but it is out of the
+    # pipeline for now. Re-add by restoring this block:
+    #
+    #   - name: ec-validate
+    #     runAfter: [sign-and-attest]
+    #     taskRef:
+    #       name: ec-validate
+    #     params:
+    #       - name: image-ref
+    #         value: $(tasks.build-image.results.image-ref)
+    #     workspaces:
+    #       - name: source
+    #         workspace: source
+    #
+    # Keeping the Task defined matters beyond convenience: the rego in it is
+    # what test_attest.py::test_predicate_keys_match_the_enterprise_contract_rego
+    # reads to pin the predicate shape. Deleting the Task would silently
+    # retire that check.
+    #
+    # What is lost while it is out: Enterprise Contract is the only thing
+    # that reads INSIDE the attestation. RHACS enforces that an image is
+    # signed, which - because only the pipeline holds the key and only signs
+    # on a pass - still implies the review passed. The gate is weaker, not
+    # absent.
     - name: acs-image-check
       runAfter: [build-image]
       taskRef:

@@ -919,11 +919,53 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
 
+        # HOME is "/" in this image and the step does not run as root, so
+        # anything writing a dotfile in HOME fails. Both ec and the Tekton
+        # credential helper do:
+        #
+        #   unsuccessful cred copy: ".docker" from "/tekton/creds" to "/":
+        #     unable to create destination directory: mkdir /.docker: permission denied
+        #   Error: creating cached local store: mkdir /.sigstore: permission denied
+        #
+        # The second one is fatal and arrives after validation has already
+        # started, so it reads like a policy failure rather than a writable
+        # -directory problem. Point HOME somewhere writable first.
+        export HOME=/tmp
+
+        # ec reads the image manifest straight from the registry and, like
+        # cosign and buildah before it, has no OpenShift integration to work
+        # out who it is. Without credentials it gets 401 on the HEAD and
+        # reports it as a warning before failing later for a different
+        # reason - see the build-image task for the same pattern.
+        IMAGE="$(params.image-ref)"
+        TOKEN="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+        export DOCKER_CONFIG=/tmp/dockercfg
+        mkdir -p "${DOCKER_CONFIG}"
+        install -m 600 /dev/null "${DOCKER_CONFIG}/config.json"
+        printf '{"auths":{"%s":{"auth":"%s"}}}' \
+          "${IMAGE%%/*}" \
+          "$(printf 'serviceaccount:%s' "${TOKEN}" | base64 -w0)" \
+          > "${DOCKER_CONFIG}/config.json"
+
         # The public key arrives as a mounted secret - no cluster API calls,
         # no RBAC, and no assumption that `oc` exists in this image.
         [[ -s /keys/cosign.pub ]] \
           || { echo "FAIL: cosign.pub not mounted from the cosign-keypair secret"; exit 1; }
         cp /keys/cosign.pub /tmp/cosign.pub
+
+        # ec checks the signature's Rekor entry, which means it needs the
+        # PRIVATE Rekor's public key - it has no way to know one that is not
+        # in the public Sigstore trust root. Without it the signature check
+        # fails with
+        #
+        #   no matching signatures: error verifying bundle: verifying
+        #   bundle: rekor log public key not found for payload
+        #
+        # which reads as "this image is not signed" when the signature is
+        # present and valid. Rekor publishes the key on its own API.
+        REKOR="$(params.rekor-url)"
+        curl -sSkf -o /tmp/rekor.pub "${REKOR}/api/v1/log/publicKey"
+        export SIGSTORE_REKOR_PUBLIC_KEY=/tmp/rekor.pub
 
         cat > /tmp/policy.yaml <<'POLICY'
         ---
@@ -932,7 +974,10 @@ spec:
         # this still blocks.
         sources:
           - policy:
-              - /policies
+              # /tmp/policies, not /policies - that is where the rego below
+              # is written, and ec resolves this path literally:
+              #   client get: stat /policies: no such file or directory
+              - /tmp/policies
             config:
               include:
                 - lightwell_inward
@@ -945,6 +990,14 @@ spec:
         import rego.v1
 
         # An artifact must carry a Lightwell Inward code review attestation.
+        # METADATA
+        # title: Code review attestation present
+        # description: Every artifact must carry a Lightwell Inward code review attestation.
+        # custom:
+        #   short_name: attestation_missing
+        #   failure_msg: see result message
+        #   solution: >-
+        #     Fix the code review or the attestation it produced.
         deny contains result if {
             not code_review_attestation
             result := {
@@ -954,6 +1007,14 @@ spec:
         }
 
         # And that review must have passed.
+        # METADATA
+        # title: Code review verdict is pass
+        # description: The attested code review must have passed.
+        # custom:
+        #   short_name: review_failed
+        #   failure_msg: see result message
+        #   solution: >-
+        #     Fix the code review or the attestation it produced.
         deny contains result if {
             some att in code_review_attestations
             att.predicate.verdict != "pass"
@@ -965,6 +1026,14 @@ spec:
 
         # A review of nothing is not a review. Guards against an empty-diff
         # attestation being used to launder a change.
+        # METADATA
+        # title: Review covered at least one file
+        # description: A review of nothing is not a review.
+        # custom:
+        #   short_name: empty_scope
+        #   failure_msg: see result message
+        #   solution: >-
+        #     Fix the code review or the attestation it produced.
         deny contains result if {
             some att in code_review_attestations
             att.predicate.scope.filesReviewed == 0
@@ -978,6 +1047,14 @@ spec:
         # later, which removes the main reason to attest it at all. The
         # predicate carries a list because two models with different jobs
         # produce the verdict, and either one may need revoking alone.
+        # METADATA
+        # title: Every reviewer is pinned by digest
+        # description: An unpinned claim cannot be revoked later.
+        # custom:
+        #   short_name: model_unpinned
+        #   failure_msg: see result message
+        #   solution: >-
+        #     Fix the code review or the attestation it produced.
         deny contains result if {
             some att in code_review_attestations
             some reviewer in att.predicate.reviewers
@@ -992,6 +1069,14 @@ spec:
         # finding. Antares localizes files and reports no line, rationale or
         # remediation; if it were the only reviewer, "pass" would mean nothing
         # more than "a localizer checked a few CWE classes and stayed quiet".
+        # METADATA
+        # title: At least one reviewer explains
+        # description: A localizer alone cannot clear a change.
+        # custom:
+        #   short_name: no_explaining_reviewer
+        #   failure_msg: see result message
+        #   solution: >-
+        #     Fix the code review or the attestation it produced.
         deny contains result if {
             some att in code_review_attestations
             explainers := [r | some r in att.predicate.reviewers; r.providesExplanation == true]
@@ -1002,17 +1087,27 @@ spec:
             }
         }
 
-        code_review_attestations := [a |
+        # ec hands each attestation over as {signatures, statement}, with the
+        # in-toto statement - _type, predicateType, predicate, subject -
+        # nested under `statement`. Reading predicateType off the top level
+        # matches nothing, so every rule below silently sees an empty list
+        # and only `attestation_missing` fires. That reports a correctly
+        # signed and attested image as having no attestation at all.
+        #
+        # Collecting the statements here rather than the wrappers keeps every
+        # rule above on `att.predicate.<field>`, which is the shape
+        # app/attest.py writes and test_attest.py pins.
+        code_review_attestations := [a.statement |
             some a in input.attestations
-            a.predicateType == "https://redhat.com/lightwell-inward/code-review/v1"
+            a.statement.predicateType == "https://redhat.com/lightwell-inward/code-review/v1"
         ]
 
         code_review_attestation if count(code_review_attestations) > 0
         REGO
 
-        echo "== Enterprise Contract validation of $(params.image-ref)"
+        echo "== Enterprise Contract validation of ${IMAGE}"
         ec validate image \
-          --image "$(params.image-ref)" \
+          --image "${IMAGE}" \
           --public-key /tmp/cosign.pub \
           --rekor-url "$(params.rekor-url)" \
           --policy /tmp/policy.yaml \
