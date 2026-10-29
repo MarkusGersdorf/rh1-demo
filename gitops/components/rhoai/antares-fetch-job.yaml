@@ -78,7 +78,12 @@ data:
       exit 0
     fi
 
-    command -v hf >/dev/null 2>&1 || pip install --quiet --no-cache-dir "huggingface_hub[cli]"
+    # The --break-system-packages retry is for Debian-based images, which
+    # mark the system interpreter externally managed (PEP 668) and refuse
+    # a plain install. Safe in a throwaway Job container.
+    command -v hf >/dev/null 2>&1 \
+      || pip install --quiet --no-cache-dir "huggingface_hub[cli]" \
+      || pip install --quiet --no-cache-dir --break-system-packages "huggingface_hub[cli]"
 
     if [[ -z "${HF_TOKEN:-}" ]]; then
       echo "[fetch] ERROR: HF_TOKEN is empty."
@@ -131,8 +136,14 @@ data:
         # wheel, so it works where venv cannot. Do NOT swap this for
         # `venv --without-pip` plus get-pip: that was the original code and
         # it produced the silently broken environment this block replaced.
+        # --break-system-packages because Debian also marks this interpreter
+        # externally managed (PEP 668), so a plain install is refused with
+        # "error: externally-managed-environment". Overriding is safe here
+        # and nowhere else: this is a throwaway Job container, and the whole
+        # point is to avoid touching the system environment by building a
+        # virtualenv on the PVC.
         echo "[fetch] ensurepip unavailable - falling back to virtualenv"
-        "${PY}" -m pip install --quiet --no-cache-dir virtualenv
+        "${PY}" -m pip install --quiet --no-cache-dir --break-system-packages virtualenv
         rm -rf "${CLI_ROOT}/venv"
         "${PY}" -m virtualenv --copies "${CLI_ROOT}/venv"
       fi

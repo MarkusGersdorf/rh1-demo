@@ -35,7 +35,12 @@ data:
     echo "[fetch] no MODEL_GGUF_URL set - converting ${MODEL_REPO} locally."
     echo "[fetch] expect ~16GB of download plus conversion. This is a one-time cost."
 
-    command -v hf >/dev/null 2>&1 || pip install --quiet --no-cache-dir "huggingface_hub[cli]"
+    # The --break-system-packages retry is for Debian-based images, which
+    # mark the system interpreter externally managed (PEP 668) and refuse
+    # a plain install. Safe in a throwaway Job container.
+    command -v hf >/dev/null 2>&1 \
+      || pip install --quiet --no-cache-dir "huggingface_hub[cli]" \
+      || pip install --quiet --no-cache-dir --break-system-packages "huggingface_hub[cli]"
 
     if [[ -z "${HF_TOKEN:-}" ]]; then
       echo "[fetch] WARNING: HF_TOKEN is empty. Foundation-Sec is a Llama derivative"
