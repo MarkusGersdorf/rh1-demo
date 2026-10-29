@@ -141,7 +141,17 @@ spec:
         app: antares-fetch
     spec:
       restartPolicy: OnFailure
-      containers:
+      # TWO IMAGES, IN ORDER. The download and GGUF conversion need
+      # llama.cpp (Debian, glibc 2.39); the CLI virtualenv must be built on
+      # the image that will RUN it - ubi9/python-312, glibc 2.34 - because a
+      # virtualenv does not survive the move between them:
+      #
+      #   /mnt/cli/venv/bin/python: /lib64/libc.so.6: version `GLIBC_2.38'
+      #   not found
+      #
+      # An initContainer gives the ordering for free: extract first, build
+      # second.
+      initContainers:
         - name: fetch
           image: ghcr.io/ggml-org/llama.cpp:full
           command: ["bash", "/scripts/fetch.sh"]
@@ -169,6 +179,27 @@ spec:
           volumeMounts:
             - name: antares-model
               mountPath: /mnt/models
+            - name: antares-cli
+              mountPath: /mnt/cli
+            - name: scripts
+              mountPath: /scripts
+      containers:
+        - name: build-cli
+          # Same image family as the antares-localize task, so the venv's
+          # interpreter and any compiled wheels match where they will run.
+          image: registry.access.redhat.com/ubi9/python-312:latest
+          command: ["bash", "/scripts/build-cli.sh"]
+          env:
+            - name: HOME
+              value: /tmp
+          resources:
+            requests:
+              cpu: "250m"
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
             - name: antares-cli
               mountPath: /mnt/cli
             - name: scripts

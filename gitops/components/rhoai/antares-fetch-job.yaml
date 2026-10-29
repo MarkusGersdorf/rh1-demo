@@ -71,7 +71,9 @@ data:
     CLI_ROOT="/mnt/cli"
 
     have_model() { [[ -s "${TARGET}" ]]; }
-    have_cli()   { [[ -x "${CLI_ROOT}/venv/bin/antares" ]]; }
+    # The SOURCE, not the venv - this container only extracts. build-cli
+    # owns the venv and runs after this one.
+    have_cli()   { [[ -f "${CLI_ROOT}/pkg/pyproject.toml" ]]; }
 
     if have_model && have_cli; then
       echo "[fetch] model and CLI already present - nothing to do."
@@ -104,73 +106,28 @@ data:
     fi
 
     if ! have_cli; then
-      echo "[fetch] extracting the Antares CLI from the model download"
+      # Only EXTRACT here. Building the virtualenv is a separate container,
+      # on a different image, for a reason worth stating plainly:
+      #
+      # this Job runs ghcr.io/ggml-org/llama.cpp:full (Debian, glibc 2.39)
+      # because that is what converts the GGUF. antares-localize runs
+      # ubi9/python-312 (glibc 2.34). A virtualenv is not portable between
+      # them - `--copies` bakes in the Debian python binary and the task
+      # gets
+      #
+      #   /mnt/cli/venv/bin/python: /lib64/libc.so.6: version `GLIBC_2.38'
+      #   not found
+      #
+      # and any wheel with a compiled extension carries the same risk. So
+      # the venv is built by the build-cli container on the SAME image the
+      # pipeline uses to run it.
+      echo "[fetch] extracting the Antares CLI source from the model download"
       ZIP="$(find "${SNAPSHOT}" -name 'antares-cli*.zip' | head -1)"
       [[ -n "${ZIP}" ]] || { echo "[fetch] ERROR: no antares-cli zip in the snapshot"; exit 1; }
-
+      rm -rf "${CLI_ROOT}/pkg"
       mkdir -p "${CLI_ROOT}/pkg"
       python3 -m zipfile -e "${ZIP}" "${CLI_ROOT}/pkg"
-
-      # --copies, and an EXPLICIT python3.12. Without both, this job builds a
-      # virtualenv that cannot import its own package:
-      #
-      #   - a default venv symlinks bin/python3 to /usr/bin/python3, which in
-      #     these images is 3.9, while site-packages is lib/python3.12. The
-      #     interpreter and the libraries then disagree and every import
-      #     fails. --copies puts a real binary in bin/ instead.
-      #   - the previous `python3 -m venv ... || --without-pip` fallback
-      #     silently produced a pip-less venv whenever the first form failed
-      #     for any reason, and the get-pip rescue below it needs egress.
-      PY="$(command -v python3.12 || command -v python3)"
-      echo "[fetch] building the CLI venv with ${PY} ($("${PY}" -V 2>&1))"
-      rm -rf "${CLI_ROOT}/venv"
-      if ! "${PY}" -m venv --copies "${CLI_ROOT}/venv" 2>/dev/null; then
-        # This job runs on ghcr.io/ggml-org/llama.cpp:full, which is Debian.
-        # Debian splits ensurepip into a python3-venv package it does not
-        # ship, so `-m venv` cannot produce a pip-enabled environment:
-        #
-        #   The virtual environment was not created successfully because
-        #   ensurepip is not available.
-        #
-        # The system pip IS present, and virtualenv carries its own pip
-        # wheel, so it works where venv cannot. Do NOT swap this for
-        # `venv --without-pip` plus get-pip: that was the original code and
-        # it produced the silently broken environment this block replaced.
-        # --break-system-packages because Debian also marks this interpreter
-        # externally managed (PEP 668), so a plain install is refused with
-        # "error: externally-managed-environment". Overriding is safe here
-        # and nowhere else: this is a throwaway Job container, and the whole
-        # point is to avoid touching the system environment by building a
-        # virtualenv on the PVC.
-        echo "[fetch] ensurepip unavailable - falling back to virtualenv"
-        "${PY}" -m pip install --quiet --no-cache-dir --break-system-packages virtualenv
-        rm -rf "${CLI_ROOT}/venv"
-        "${PY}" -m virtualenv --copies "${CLI_ROOT}/venv"
-      fi
-      [[ -x "${CLI_ROOT}/venv/bin/pip" ]] \
-        || { echo "[fetch] ERROR: the venv has no pip - cannot install the CLI"; exit 1; }
-
-      # The gated zip contains a SOURCE TREE (pyproject.toml, src/), not a
-      # wheel, so the old `install .../pkg/*.whl` matched nothing. It failed
-      # into a fallback whose errors were discarded, which is how this job
-      # reported success having installed the dependencies and not the
-      # package.
-      "${CLI_ROOT}/venv/bin/pip" install --quiet --no-cache-dir "${CLI_ROOT}/pkg"
-
-      # Assert it actually works. Stage A is advisory, so a broken CLI is
-      # invisible at pipeline time - antares-localize prints one line and
-      # passes. Fail HERE, where the cause is, rather than leaving a demo
-      # that quietly has no localizer.
-      "${CLI_ROOT}/venv/bin/python3" -c 'import antares_cli' \
-        || { echo "[fetch] ERROR: antares_cli is not importable after install"; exit 1; }
-      "${CLI_ROOT}/venv/bin/antares" --version \
-        || { echo "[fetch] ERROR: the antares entrypoint does not run"; exit 1; }
-
-      # The shebang is absolute, so every consumer must mount this PVC at
-      # CLI_ROOT. The antares-localize task sets mountPath to match; keep
-      # them in step.
-      echo "[fetch] CLI installed at ${CLI_ROOT}/venv/bin/antares"
-      echo "[fetch] shebang: $(head -1 "${CLI_ROOT}/venv/bin/antares")"
+      echo "[fetch] CLI source at ${CLI_ROOT}/pkg - build-cli builds the venv"
     fi
 
     if ! have_model; then
@@ -188,3 +145,39 @@ data:
     # The snapshot is only needed for conversion and the CLI extraction.
     rm -rf "${SNAPSHOT}"
     echo "[fetch] done: $(du -h "${TARGET}" | cut -f1)"
+  build-cli.sh: |
+    #!/usr/bin/env bash
+    # Build the Antares CLI virtualenv, on the SAME image antares-localize
+    # uses. See fetch.sh for why this is not done alongside the download.
+    set -euo pipefail
+    CLI_ROOT="/mnt/cli"
+
+    [[ -f "${CLI_ROOT}/pkg/pyproject.toml" ]] \
+      || { echo "[build-cli] ERROR: no CLI source at ${CLI_ROOT}/pkg"; exit 1; }
+
+    if [[ -x "${CLI_ROOT}/venv/bin/antares" ]] \
+       && "${CLI_ROOT}/venv/bin/python3" -c 'import antares_cli' 2>/dev/null; then
+      echo "[build-cli] a working venv is already present - nothing to do."
+      exit 0
+    fi
+
+    PY=/usr/bin/python3.12
+    [[ -x "${PY}" ]] || PY="$(command -v python3)"
+    echo "[build-cli] building with ${PY} ($("${PY}" -V 2>&1))"
+    rm -rf "${CLI_ROOT}/venv"
+    "${PY}" -m venv "${CLI_ROOT}/venv"
+
+    "${CLI_ROOT}/venv/bin/pip" install --quiet --no-cache-dir --upgrade pip
+    "${CLI_ROOT}/venv/bin/pip" install --quiet --no-cache-dir "${CLI_ROOT}/pkg"
+
+    # Assert, do not assume. Stage A is advisory, so a broken CLI is silent
+    # at pipeline time: antares-localize prints one line and passes. Fail
+    # here, where the cause is.
+    "${CLI_ROOT}/venv/bin/python3" -c 'import antares_cli' \
+      || { echo "[build-cli] ERROR: antares_cli is not importable"; exit 1; }
+    "${CLI_ROOT}/venv/bin/antares" --version \
+      || { echo "[build-cli] ERROR: the antares entrypoint does not run"; exit 1; }
+
+    # The shebang is absolute, so every consumer must mount this PVC at
+    # CLI_ROOT. The antares-localize task sets mountPath to match.
+    echo "[build-cli] installed: $(head -1 "${CLI_ROOT}/venv/bin/antares")"
