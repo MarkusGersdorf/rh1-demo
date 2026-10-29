@@ -91,15 +91,43 @@ data:
 
       mkdir -p "${CLI_ROOT}/pkg"
       python3 -m zipfile -e "${ZIP}" "${CLI_ROOT}/pkg"
-      python3 -m venv "${CLI_ROOT}/venv" 2>/dev/null \
-        || python3 -m venv --without-pip "${CLI_ROOT}/venv"
-      if ! "${CLI_ROOT}/venv/bin/python3" -m pip --version >/dev/null 2>&1; then
-        curl -sSL https://bootstrap.pypa.io/get-pip.py | "${CLI_ROOT}/venv/bin/python3" -
-      fi
-      "${CLI_ROOT}/venv/bin/pip" install --quiet --no-cache-dir "${CLI_ROOT}/pkg"/*.whl 2>/dev/null \
-        || "${CLI_ROOT}/venv/bin/pip" install --quiet --no-cache-dir "${CLI_ROOT}/pkg"
-      "${CLI_ROOT}/venv/bin/antares" --version || true
+
+      # --copies, and an EXPLICIT python3.12. Without both, this job builds a
+      # virtualenv that cannot import its own package:
+      #
+      #   - a default venv symlinks bin/python3 to /usr/bin/python3, which in
+      #     these images is 3.9, while site-packages is lib/python3.12. The
+      #     interpreter and the libraries then disagree and every import
+      #     fails. --copies puts a real binary in bin/ instead.
+      #   - the previous `python3 -m venv ... || --without-pip` fallback
+      #     silently produced a pip-less venv whenever the first form failed
+      #     for any reason, and the get-pip rescue below it needs egress.
+      PY="$(command -v python3.12 || command -v python3)"
+      echo "[fetch] building the CLI venv with ${PY} ($("${PY}" -V 2>&1))"
+      rm -rf "${CLI_ROOT}/venv"
+      "${PY}" -m venv --copies "${CLI_ROOT}/venv"
+
+      # The gated zip contains a SOURCE TREE (pyproject.toml, src/), not a
+      # wheel, so the old `install .../pkg/*.whl` matched nothing. It failed
+      # into a fallback whose errors were discarded, which is how this job
+      # reported success having installed the dependencies and not the
+      # package.
+      "${CLI_ROOT}/venv/bin/pip" install --quiet --no-cache-dir "${CLI_ROOT}/pkg"
+
+      # Assert it actually works. Stage A is advisory, so a broken CLI is
+      # invisible at pipeline time - antares-localize prints one line and
+      # passes. Fail HERE, where the cause is, rather than leaving a demo
+      # that quietly has no localizer.
+      "${CLI_ROOT}/venv/bin/python3" -c 'import antares_cli' \
+        || { echo "[fetch] ERROR: antares_cli is not importable after install"; exit 1; }
+      "${CLI_ROOT}/venv/bin/antares" --version \
+        || { echo "[fetch] ERROR: the antares entrypoint does not run"; exit 1; }
+
+      # The shebang is absolute, so every consumer must mount this PVC at
+      # CLI_ROOT. The antares-localize task sets mountPath to match; keep
+      # them in step.
       echo "[fetch] CLI installed at ${CLI_ROOT}/venv/bin/antares"
+      echo "[fetch] shebang: $(head -1 "${CLI_ROOT}/venv/bin/antares")"
     fi
 
     if ! have_model; then
