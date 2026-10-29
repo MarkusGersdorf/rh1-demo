@@ -50,7 +50,8 @@ spec:
 
         COMMIT="$(git rev-parse HEAD)"
         BASE="$(params.base-revision)"
-        if [[ -z "${BASE}" ]]; then
+        if [[ -z "${BASE}" ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+          # Empty, or the object no longer exists (force-push replaced it).
           BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
         else
           BASE="$(git rev-parse "${BASE}")"
