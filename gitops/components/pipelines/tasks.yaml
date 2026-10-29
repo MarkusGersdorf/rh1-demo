@@ -286,6 +286,27 @@ spec:
           value: $(params.model)
         - name: ANTARES_DATA_DIR
           value: /tmp/antares-data
+        # The CLI's stock settings cannot complete a single request on CPU.
+        # Its defaults are max_tokens 4096 and a 300s client timeout
+        # (inference/defaults.py); this model generates at ~8 tok/s on this
+        # cluster, so 4096 tokens needs ~512s and every request is cancelled
+        # at 300s and retried. The predictor log shows it exactly:
+        #
+        #   stop: cancel task, id_task = 0       at 14:22
+        #   stop: cancel task, id_task = 2348    at 19:22
+        #   stop: cancel task, id_task = 4815    at 24:22
+        #
+        # - five minutes apart, forever, until the TaskRun times out and
+        # Stage A reports "no Antares report". The model was working the
+        # whole time.
+        #
+        # 1024 tokens is ~2 minutes at the measured rate, comfortably inside
+        # the raised timeout, and enough for a localizer whose output is
+        # five fields per finding. Raise both if you move to GPU.
+        - name: ANTARES_MAX_TOKENS
+          value: "1024"
+        - name: ANTARES_REMOTE_TIMEOUT_SECONDS
+          value: "600"
       script: |
         #!/usr/bin/env bash
         set -uo pipefail
