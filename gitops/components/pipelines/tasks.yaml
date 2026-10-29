@@ -244,6 +244,24 @@ spec:
     - name: source
     - name: antares-cli
       description: PVC holding the Antares CLI extracted by the antares-fetch job.
+      # /mnt/cli, not the default /workspace/antares-cli. The antares-fetch
+      # job builds the virtualenv with CLI_ROOT=/mnt/cli, and a virtualenv is
+      # not relocatable: `venv/bin/antares` carries an absolute shebang,
+      #
+      #   #!/mnt/cli/venv/bin/python3
+      #
+      # so mounting the same PVC anywhere else gives
+      #
+      #   /workspace/antares-cli/venv/bin/antares:
+      #     /mnt/cli/venv/bin/python3: bad interpreter: No such file or directory
+      #
+      # Stage A is advisory, so the task swallows that and reports "no
+      # Antares report" - the localizer silently never runs and the only
+      # clue is one line in the sweep log.
+      #
+      # Mount path and CLI_ROOT must agree. If you change one, change the
+      # other: gitops/components/rhoai/antares-fetch-job.yaml.
+      mountPath: /mnt/cli
   results:
     - name: findings-count
       type: string
