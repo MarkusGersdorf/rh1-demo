@@ -293,7 +293,19 @@ spec:
     - name: sweep
       image: registry.access.redhat.com/ubi9/python-312:latest
       workingDir: $(workspaces.source.path)/repo
-      timeout: 25m0s
+      # 40m, not 25m. This does NOT make anything faster - it is headroom so
+      # a sweep that is merely slow finishes instead of being killed and
+      # reported as "no Antares report", which is how every Stage A failure
+      # in this repo has presented.
+      #
+      # Sized against the measured rate: ~8 tok/s, 1024 max tokens, one
+      # request per file per CWE, five source files. max-cwes 1 is ~11 min,
+      # so 40m absorbs a slower node or a second CWE class without hiding a
+      # genuine hang for too long. Stage A is advisory and runs in parallel
+      # with sast-semgrep and lightwell-verify, so this does not extend the
+      # pipeline's critical path unless Stage A is the slowest branch -
+      # which, on CPU, it is.
+      timeout: 40m0s
       env:
         - name: ANTARES_ENDPOINT
           value: $(params.endpoint)
